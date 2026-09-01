@@ -1,9 +1,14 @@
 name: Release
 
+# A release is cut for the version in manifest.json whenever it doesn't exist
+# yet: on any push to main (the normal path), on pushing a version tag, or via
+# manual dispatch. The job is idempotent — an existing release is left alone.
 on:
   push:
     tags:
       - "[0-9]+.[0-9]+.[0-9]+"
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       tag:
@@ -19,21 +24,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-
       - name: Resolve tag
         id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ github.event.inputs.tag }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
           else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            TAG=$(node -p "require('./manifest.json').version")
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG already exists — nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check tag matches manifest version
+        if: steps.tag.outputs.exists == 'false'
         run: |
           MANIFEST_VERSION=$(node -p "require('./manifest.json').version")
           if [ "$MANIFEST_VERSION" != "${{ steps.tag.outputs.tag }}" ]; then
@@ -41,18 +53,28 @@ jobs:
             exit 1
           fi
 
+      - uses: actions/setup-node@v4
+        if: steps.tag.outputs.exists == 'false'
+        with:
+          node-version: "22"
+          cache: npm
+
       - name: Install
+        if: steps.tag.outputs.exists == 'false'
         run: npm ci
 
       - name: Typecheck and test
+        if: steps.tag.outputs.exists == 'false'
         run: |
           npx tsc --noEmit
           node --import tsx --test tests/serializer.test.ts tests/block.test.ts tests/rollover.test.ts tests/slots.test.ts tests/debounce.test.ts
 
       - name: Build
+        if: steps.tag.outputs.exists == 'false'
         run: node esbuild.config.mjs production
 
       - name: Create release
+        if: steps.tag.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
