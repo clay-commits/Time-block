@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to release (must match manifest.json)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check tag matches manifest version
+        run: |
+          MANIFEST_VERSION=$(node -p "require('./manifest.json').version")
+          if [ "$MANIFEST_VERSION" != "${{ steps.tag.outputs.tag }}" ]; then
+            echo "Tag ${{ steps.tag.outputs.tag }} does not match manifest version $MANIFEST_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck and test
+        run: |
+          npx tsc --noEmit
+          node --import tsx --test tests/serializer.test.ts tests/block.test.ts tests/rollover.test.ts tests/slots.test.ts tests/debounce.test.ts
+
+      - name: Build
+        run: node esbuild.config.mjs production
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          gh release create "$TAG" main.js manifest.json styles.css \
+            --title "$TAG" \
+            --notes "Timeblock Daily $TAG — install via BRAT with clay-commits/time-block." \
+            --target "$GITHUB_SHA"

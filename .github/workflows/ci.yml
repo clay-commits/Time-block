@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: node --import tsx --test tests/serializer.test.ts tests/block.test.ts tests/rollover.test.ts tests/slots.test.ts tests/debounce.test.ts
+
+      - name: Build
+        run: node esbuild.config.mjs production
+
+      - name: Verify artifacts
+        run: ls -l main.js manifest.json styles.css
