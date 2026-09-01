@@ -160,3 +160,44 @@ test("find → replace round-trip is stable when content is unchanged", () => {
 	assert.ok(found);
 	assert.equal(replaceFencedBlock(doc, found, found.inner), doc);
 });
+
+// ---------------------------------------------------------------------------
+// Review-pass regressions: CRLF, fence variants, semantic inner equality
+// ---------------------------------------------------------------------------
+
+import { sameInner } from "../src/data/block";
+
+test("CRLF notes: block is found, inner keeps bytes, replace touches only the region", () => {
+	const doc = "# t\r\n```timeblock\r\nversion: 1\r\n```\r\nrest\r\n";
+	const found = findFencedBlock(doc, "timeblock");
+	assert.ok(found, "fence must be found in a CRLF file");
+	assert.equal(found.inner, "version: 1\r\n");
+	const replaced = replaceFencedBlock(doc, found, "version: 2\n");
+	assert.equal(replaced, "# t\r\n```timeblock\r\nversion: 2\n```\r\nrest\r\n");
+});
+
+test("info string with extra tokens still names the language by first token", () => {
+	const doc = "```timeblock extra tokens\na: 1\n```\n";
+	const found = findFencedBlock(doc, "timeblock");
+	assert.ok(found);
+	assert.equal(found.inner, "a: 1\n");
+	// but a longer first token is a different language
+	assert.equal(findFencedBlock("```timeblock-lists\na: 1\n```\n", "timeblock"), null);
+});
+
+test("tilde-fenced timeblock blocks are found and replaced, fences preserved", () => {
+	const doc = "~~~timeblock\na: 1\n~~~\n";
+	const found = findFencedBlock(doc, "timeblock");
+	assert.ok(found);
+	assert.equal(found.inner, "a: 1\n");
+	assert.equal(replaceFencedBlock(doc, found, "a: 2\n"), "~~~timeblock\na: 2\n~~~\n");
+});
+
+test("sameInner tolerates CRLF and trailing blank lines but not real differences", () => {
+	assert.ok(sameInner("a: 1\r\nb: 2\r\n", "a: 1\nb: 2\n"));
+	assert.ok(sameInner("a: 1\n\n", "a: 1\n"));
+	assert.ok(sameInner("a: 1", "a: 1\n"));
+	assert.ok(sameInner("", "\n"));
+	assert.ok(!sameInner("a: 1\n", "a: 2\n"));
+	assert.ok(!sameInner("a: 1\n\nb: 2\n", "a: 1\nb: 2\n"));
+});

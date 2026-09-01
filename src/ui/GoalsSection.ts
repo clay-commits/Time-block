@@ -34,7 +34,13 @@ export class GoalsSection {
 				if (!goal) {
 					if (value.trim() === "") return;
 					goal = { id: makeId("goal"), text: value, created: ctx.now() };
-					day.goals.push(goal);
+					// Land at THIS row's index (padding skipped rows with
+					// in-memory placeholders the serializer omits) so rows
+					// keep their binding across widget rebuilds.
+					while (day.goals.length < index) {
+						day.goals.push({ id: makeId("goal"), text: "", created: ctx.now() });
+					}
+					day.goals.splice(index, 1, goal);
 				} else {
 					goal.text = value;
 				}

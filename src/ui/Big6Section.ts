@@ -22,12 +22,13 @@ export class Big6Section {
 		let item: Big6Item | null = day.big6[index] ?? null;
 		const row = el(body, "div", "tb-row tb-big6-row");
 		if (item?.completed) row.classList.add("tb-done");
+		const hasText = () => !!item && item.text.trim() !== "";
 		const check = checkbox(
 			row,
 			!!item?.completed,
 			`Big 6 item ${index + 1} done`,
 			(checked, input) => {
-				if (!item) {
+				if (!item || !hasText()) {
 					input.checked = false;
 					return;
 				}
@@ -36,7 +37,7 @@ export class Big6Section {
 				ctx.changed();
 			}
 		);
-		check.disabled = !item;
+		check.disabled = !hasText();
 		textInput(row, {
 			value: item?.text ?? "",
 			placeholder: "",
@@ -51,11 +52,22 @@ export class Big6Section {
 						created: ctx.now(),
 						completed: null,
 					};
-					day.big6.push(item);
-					check.disabled = false;
+					// Land at THIS row's index (padding skipped rows with
+					// in-memory placeholders the serializer omits) so rows
+					// keep their binding across widget rebuilds.
+					while (day.big6.length < index) {
+						day.big6.push({
+							id: makeId("big6"),
+							text: "",
+							created: ctx.now(),
+							completed: null,
+						});
+					}
+					day.big6.splice(index, 1, item);
 				} else {
 					item.text = value;
 				}
+				check.disabled = value.trim() === "";
 				ctx.changed();
 			},
 		});

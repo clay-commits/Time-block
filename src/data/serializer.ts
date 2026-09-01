@@ -12,7 +12,7 @@ import {
 	emptyDay,
 	emptyLists,
 } from "./types";
-import { parseHM } from "./slots";
+import { formatHM, parseHM } from "./slots";
 
 export class TimeblockParseError extends Error {
 	constructor(message: string, public readonly cause?: unknown) {
@@ -21,10 +21,15 @@ export class TimeblockParseError extends Error {
 	}
 }
 
+// forceQuotes + double quoting keeps every string a single-line escaped
+// scalar, so a "```" the user types into any text can never appear at the
+// start of a YAML line and terminate the surrounding markdown fence.
 const DUMP_OPTS = {
 	lineWidth: -1,
 	noRefs: true,
 	sortKeys: false,
+	forceQuotes: true,
+	quotingType: '"',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -114,9 +119,10 @@ export function serializeDay(day: DayData): string {
 	const doc: Record<string, unknown> = {
 		version: day.version,
 		date: day.date,
-		goals: day.goals.map(orderedGoal),
+		// Empty-text goals/big6 are in-memory row placeholders, not data.
+		goals: day.goals.filter((g) => g.text.trim() !== "").map(orderedGoal),
 		goalsGhost: [...day.goalsGhost],
-		big6: day.big6.map(orderedBig6),
+		big6: day.big6.filter((b) => b.text.trim() !== "").map(orderedBig6),
 		tasks: day.tasks.map(orderedTask),
 		blocks,
 		notes: day.notes,
@@ -159,8 +165,8 @@ function parseTask(v: unknown, index: number): Task | null {
 	};
 	const carriedFrom = asDateStr(v.carriedFrom);
 	if (carriedFrom) t.carriedFrom = carriedFrom;
-	const slot = asString(v.slot, "");
-	if (slot && parseHM(slot) != null) t.slot = slot;
+	const slotMinutes = parseHM(asString(v.slot, ""));
+	if (slotMinutes != null) t.slot = formatHM(slotMinutes);
 	return t;
 }
 
@@ -191,11 +197,18 @@ export function normalizeDay(day: DayData): DayData {
 	const claimed = new Map<string, string>(); // slot -> taskId
 	for (const t of day.tasks) {
 		if (!t.slot) continue;
-		if (parseHM(t.slot) == null || claimed.has(t.slot)) {
+		const minutes = parseHM(t.slot);
+		if (minutes == null) {
 			delete t.slot;
 			continue;
 		}
-		claimed.set(t.slot, t.id);
+		const canonical = formatHM(minutes);
+		if (claimed.has(canonical)) {
+			delete t.slot;
+			continue;
+		}
+		t.slot = canonical;
+		claimed.set(canonical, t.id);
 	}
 	for (const [key, block] of Object.entries(day.blocks)) {
 		if (block.taskId && claimed.get(key) !== block.taskId) {
@@ -272,9 +285,11 @@ export function parseDay(source: string, fallbackDate: string): DayData {
 
 	if (isRecord(raw.blocks)) {
 		for (const [key, value] of Object.entries(raw.blocks)) {
-			if (parseHM(key) == null) continue;
+			const minutes = parseHM(key);
+			if (minutes == null) continue;
+			const canonical = formatHM(minutes);
 			const block = parseBlock(value);
-			if (block) day.blocks[key] = block;
+			if (block && !day.blocks[canonical]) day.blocks[canonical] = block;
 		}
 	}
 	day.notes = asString(raw.notes, "");

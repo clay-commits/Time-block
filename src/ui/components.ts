@@ -77,7 +77,7 @@ export function textarea(parent: HTMLElement, opts: TextareaOpts): HTMLTextAreaE
 		grow();
 		opts.onInput?.(area.value);
 	});
-	window.requestAnimationFrame(grow);
+	(area.ownerDocument.defaultView ?? window).requestAnimationFrame(grow);
 	return area;
 }
 

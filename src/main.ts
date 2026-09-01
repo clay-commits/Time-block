@@ -8,7 +8,7 @@ import {
 } from "obsidian";
 import { DayData, ListsData } from "./data/types";
 import { parseDay, parseLists, TimeblockParseError } from "./data/serializer";
-import { findFencedBlock } from "./data/block";
+import { findFencedBlock, sameInner } from "./data/block";
 import { BlockWriter } from "./write/BlockWriter";
 import {
 	DEFAULT_SETTINGS,
@@ -29,10 +29,8 @@ import {
 	renderErrorCard,
 } from "./ui/PlannerView";
 
-function normEol(source: string): string {
-	if (source === "") return "";
-	return source.endsWith("\n") ? source : source + "\n";
-}
+const FOREIGN_BLOCK_MSG =
+	"Timeblock Daily manages only the first timeblock block in a note. This block is a duplicate (or its content no longer matches the managed block), so it is shown read-only to protect your data. Remove the extra block, or move its content into the first one.";
 
 export default class TimeblockPlugin extends Plugin {
 	settings: TimeblockSettings = { ...DEFAULT_SETTINGS };
@@ -143,6 +141,8 @@ export default class TimeblockPlugin extends Plugin {
 
 	async openToday(): Promise<void> {
 		try {
+			// Rollover reads previous notes from disk — land pending edits first.
+			await this.flushAll();
 			const file = await ensureTodayPlanner(this.app, this.settings);
 			await this.app.workspace.getLeaf(false).openFile(file);
 		} catch (e) {
@@ -171,38 +171,82 @@ export default class TimeblockPlugin extends Plugin {
 		source: string,
 		container: HTMLElement,
 		ctx: MarkdownPostProcessorContext
-	): void {
+	): void | Promise<void> {
 		const path = ctx.sourcePath;
-		const norm = normEol(source);
-		let session = this.daySessions.get(path);
+		const session = this.daySessions.get(path);
 
-		if (!session || session.writer.getLastWritten() !== norm) {
-			// Not an echo of our own write: hydrate the model from the source.
-			const fallbackDate =
-				dateForDailyPath(this.app, this.settings, path) ??
-				moment().format("YYYY-MM-DD");
-			let day: DayData;
+		// Echo of our own write (or an unchanged re-render): reuse the live
+		// model — this is the hot path while typing, kept synchronous.
+		const last = session?.writer.getLastWritten();
+		if (session && last != null && sameInner(source, last)) {
+			this.mountDay(container, ctx, session);
+			return;
+		}
+		return this.hydrateAndMountDay(source, container, ctx);
+	}
+
+	/**
+	 * First render of a note, or its block changed outside this plugin: read
+	 * the file and bind to the FIRST timeblock block's exact bytes. A rendered
+	 * block whose content does not match that block (a pasted duplicate, a
+	 * non-standard fence the finder cannot address) gets a read-only card so
+	 * a live-looking planner can never silently discard edits.
+	 */
+	private async hydrateAndMountDay(
+		source: string,
+		container: HTMLElement,
+		ctx: MarkdownPostProcessorContext
+	): Promise<void> {
+		const path = ctx.sourcePath;
+		let diskInner: string | null = null;
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (file instanceof TFile) {
 			try {
-				day = parseDay(norm, fallbackDate);
+				const content = await this.app.vault.cachedRead(file);
+				const found = findFencedBlock(content, "timeblock");
+				if (found) diskInner = found.inner;
 			} catch (e) {
-				renderErrorCard(
-					container,
-					"Timeblock Daily can't read this block",
-					e instanceof TimeblockParseError ? e.message : String(e)
-				);
-				return;
-			}
-			if (!session) {
-				session = this.createDaySession(path, day, norm);
-				this.daySessions.set(path, session);
-			} else {
-				session.writer.dropPending();
-				session.writer.primeLastWritten(norm);
-				session.day = day;
-				session.armedTaskId = null;
+				console.error("Timeblock Daily: could not read note", e);
 			}
 		}
+		if (diskInner == null || !sameInner(source, diskInner)) {
+			renderErrorCard(container, "This planner block is read-only", FOREIGN_BLOCK_MSG);
+			return;
+		}
 
+		const fallbackDate =
+			dateForDailyPath(this.app, this.settings, path) ??
+			moment().format("YYYY-MM-DD");
+		let day: DayData;
+		try {
+			day = parseDay(diskInner, fallbackDate);
+		} catch (e) {
+			renderErrorCard(
+				container,
+				"Timeblock Daily can't read this block",
+				e instanceof TimeblockParseError ? e.message : String(e)
+			);
+			return;
+		}
+
+		let session = this.daySessions.get(path);
+		if (!session) {
+			session = this.createDaySession(path, day, diskInner);
+			this.daySessions.set(path, session);
+		} else {
+			session.writer.dropPending();
+			session.writer.primeLastWritten(diskInner);
+			session.day = day;
+			session.armedTaskId = null;
+		}
+		this.mountDay(container, ctx, session);
+	}
+
+	private mountDay(
+		container: HTMLElement,
+		ctx: MarkdownPostProcessorContext,
+		session: DaySession
+	): void {
 		const child = new PlannerView(container, {
 			app: this.app,
 			settings: this.settings,
@@ -268,35 +312,61 @@ export default class TimeblockPlugin extends Plugin {
 		source: string,
 		container: HTMLElement,
 		ctx: MarkdownPostProcessorContext
-	): void {
+	): void | Promise<void> {
 		const path = ctx.sourcePath;
-		const norm = normEol(source);
-		let session = this.listsSessions.get(path);
+		const session = this.listsSessions.get(path);
+		const last = session?.writer.getLastWritten();
+		if (session && last != null && sameInner(source, last)) {
+			ctx.addChild(new ListsFileView(container, session));
+			return;
+		}
+		return this.hydrateAndMountLists(source, container, ctx);
+	}
 
-		if (!session || session.writer.getLastWritten() !== norm) {
-			let data: ListsData | null;
+	private async hydrateAndMountLists(
+		source: string,
+		container: HTMLElement,
+		ctx: MarkdownPostProcessorContext
+	): Promise<void> {
+		const path = ctx.sourcePath;
+		let diskInner: string | null = null;
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (file instanceof TFile) {
 			try {
-				data = parseLists(norm);
+				const content = await this.app.vault.cachedRead(file);
+				const found = findFencedBlock(content, "timeblock-lists");
+				if (found) diskInner = found.inner;
 			} catch (e) {
-				renderErrorCard(
-					container,
-					"Timeblock Daily can't read this lists block",
-					e instanceof TimeblockParseError ? e.message : String(e)
-				);
-				return;
-			}
-			if (!session) {
-				session = this.createListsSession(path, data, norm);
-				this.listsSessions.set(path, session);
-			} else {
-				session.writer.dropPending();
-				session.writer.primeLastWritten(norm);
-				session.data = data;
+				console.error("Timeblock Daily: could not read lists note", e);
 			}
 		}
+		if (diskInner == null || !sameInner(source, diskInner)) {
+			renderErrorCard(container, "This lists block is read-only", FOREIGN_BLOCK_MSG);
+			return;
+		}
 
-		const child = new ListsFileView(container, session);
-		ctx.addChild(child);
+		let data: ListsData | null;
+		try {
+			data = parseLists(diskInner);
+		} catch (e) {
+			renderErrorCard(
+				container,
+				"Timeblock Daily can't read this lists block",
+				e instanceof TimeblockParseError ? e.message : String(e)
+			);
+			return;
+		}
+
+		let session = this.listsSessions.get(path);
+		if (!session) {
+			session = this.createListsSession(path, data, diskInner);
+			this.listsSessions.set(path, session);
+		} else {
+			session.writer.dropPending();
+			session.writer.primeLastWritten(diskInner);
+			session.data = data;
+		}
+		ctx.addChild(new ListsFileView(container, session));
 	}
 
 	private createListsSession(
@@ -357,7 +427,7 @@ export default class TimeblockPlugin extends Plugin {
 			return this.configuredListsPromise;
 		}
 		this.configuredListsPath = path;
-		this.configuredListsPromise = (async () => {
+		const promise = (async (): Promise<ListsSession | null> => {
 			try {
 				const { file, lists, inner } = await ensureListsFile(
 					this.app,
@@ -373,6 +443,14 @@ export default class TimeblockPlugin extends Plugin {
 				return null;
 			}
 		})();
-		return this.configuredListsPromise;
+		this.configuredListsPromise = promise;
+		// Never cache a failure — the next render should retry.
+		void promise.then((result) => {
+			if (result === null && this.configuredListsPromise === promise) {
+				this.configuredListsPromise = null;
+				this.configuredListsPath = null;
+			}
+		});
+		return promise;
 	}
 }

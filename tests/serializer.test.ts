@@ -236,3 +236,63 @@ test("lists: blank source is empty, bad YAML throws, malformed lists dropped", (
 	assert.equal(data.lists.length, 1);
 	assert.equal(data.lists[0]!.name, "Ideas");
 });
+
+// ---------------------------------------------------------------------------
+// Review-pass regressions
+// ---------------------------------------------------------------------------
+
+test("serialized YAML never contains a line Obsidian could read as a fence", () => {
+	const day = emptyDay("2026-09-01");
+	day.notes = "some code:\n```\nconst x = 1;\n```\nand tildes:\n~~~\ndone";
+	day.tasks.push({
+		id: "t1",
+		text: "task with\n```js\nfence inside\n```",
+		created: "c",
+		completed: null,
+	});
+	day.goals.push({ id: "g1", text: "```", created: "c" });
+	const yaml = serializeDay(day);
+	for (const line of yaml.split("\n")) {
+		assert.ok(
+			!/^ {0,3}(`{3,}|~{3,})/.test(line),
+			`fence-like line in output: ${JSON.stringify(line)}`
+		);
+	}
+	// and it still round-trips exactly
+	const back = parseDay(yaml, "2026-09-01");
+	assert.equal(back.notes, day.notes);
+	assert.equal(back.tasks[0]!.text, day.tasks[0]!.text);
+	assert.equal(back.goals[0]!.text, "```");
+	assert.equal(yaml, serializeDay(back));
+});
+
+test("empty-text goal/big6 placeholders are omitted from serialization", () => {
+	const day = emptyDay("2026-09-01");
+	day.goals = [
+		{ id: "g0", text: "", created: "c" },
+		{ id: "g1", text: "real goal", created: "c" },
+	];
+	day.big6 = [
+		{ id: "b0", text: "  ", created: "c", completed: null },
+		{ id: "b1", text: "real item", created: "c", completed: null },
+	];
+	const back = parseDay(serializeDay(day), "2026-09-01");
+	assert.deepEqual(back.goals.map((g) => g.id), ["g1"]);
+	assert.deepEqual(back.big6.map((b) => b.id), ["b1"]);
+});
+
+test("non-zero-padded slots and block keys canonicalize to HH:MM", () => {
+	const yaml = [
+		"date: 2026-09-01",
+		"tasks:",
+		'  - {id: t1, text: hello, created: c, slot: "9:00"}',
+		"blocks:",
+		'  "6:15": {text: coffee, created: c}',
+		'  "06:15": {text: duplicate, created: c}',
+	].join("\n");
+	const day = parseDay(yaml, "2026-09-01");
+	assert.equal(day.tasks[0]!.slot, "09:00");
+	assert.ok(day.blocks["09:00"], "block created for canonicalized task slot");
+	assert.equal(day.blocks["06:15"]!.text, "coffee");
+	assert.equal(Object.keys(day.blocks).includes("6:15"), false);
+});

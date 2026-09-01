@@ -37,11 +37,21 @@ function splitLines(content: string): Line[] {
 		let nl = content.indexOf("\n", start);
 		if (nl === -1) {
 			if (start < content.length) {
-				lines.push({ text: content.slice(start), start, next: content.length });
+				lines.push({
+					text: content.slice(start).replace(/\r$/, ""),
+					start,
+					next: content.length,
+				});
 			}
 			break;
 		}
-		lines.push({ text: content.slice(start, nl), start, next: nl + 1 });
+		// Strip a trailing \r from the matching text (CRLF files) but keep the
+		// real offsets so replacement stays byte-exact.
+		lines.push({
+			text: content.slice(start, nl).replace(/\r$/, ""),
+			start,
+			next: nl + 1,
+		});
 		start = nl + 1;
 	}
 	return lines;
@@ -56,10 +66,23 @@ function closesFence(lineText: string, marker: string): boolean {
 	return run[0] === marker[0] && run.length >= marker.length;
 }
 
-/** Closing fence for OUR block: column 0, backticks only, length >= opener. */
+/** Closing fence for OUR block: column 0, same fence char, length >= opener. */
 function closesOurFence(lineText: string, marker: string): boolean {
-	const m = /^(`{3,})\s*$/.exec(lineText);
-	return m !== null && m[1]!.length >= marker.length;
+	const m = /^(`{3,}|~{3,})\s*$/.exec(lineText);
+	if (!m) return false;
+	const run = m[1]!;
+	return run[0] === marker[0] && run.length >= marker.length;
+}
+
+/**
+ * Semantic equality for block inner content, tolerant of representation-only
+ * differences (CRLF vs LF, trailing blank lines) that Obsidian's rendered
+ * source and the raw bytes on disk can legitimately disagree on.
+ */
+export function sameInner(a: string, b: string): boolean {
+	const norm = (s: string) =>
+		s.replace(/\r\n?/g, "\n").replace(/\n*$/, "\n");
+	return norm(a) === norm(b);
 }
 
 /** Find the first fenced block whose info string is exactly `lang`. */
@@ -80,7 +103,10 @@ export function findFencedBlock(
 		if (!m) continue;
 		const marker = m[1]!;
 		const info = m[2]!.trim();
-		if (marker[0] === "`" && info === lang) {
+		// Match the way Obsidian routes code blocks to processors: any fence
+		// char, and only the FIRST info-string token names the language.
+		const infoLang = info.split(/\s+/)[0] ?? "";
+		if (infoLang === lang && !(marker[0] === "`" && info.includes("`"))) {
 			// Our block: inner runs from the end of this line to the closing fence.
 			const innerStart = line.next;
 			for (let j = i + 1; j < lines.length; j++) {

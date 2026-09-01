@@ -74,6 +74,7 @@ const NARROW_PX = 640;
 
 export class PlannerView extends MarkdownRenderChild {
 	private root: HTMLElement | null = null;
+	private unloaded = false;
 	private resizeObserver: ResizeObserver | null = null;
 	private tasksSection: TasksSection | null = null;
 	private timeGrid: TimeGrid | null = null;
@@ -112,8 +113,10 @@ export class PlannerView extends MarkdownRenderChild {
 	}
 
 	onunload(): void {
+		this.unloaded = true;
 		this.deps.session.listeners.delete(this.rebuildListener);
 		if (this.root) this.deps.session.focus.captureFrom(this.root);
+		this.root = null;
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
 		void this.deps.session.writer.flush();
@@ -181,7 +184,13 @@ export class PlannerView extends MarkdownRenderChild {
 		this.registerDomEvent(root, "input", capture);
 		this.registerDomEvent(root, "click", capture);
 
-		window.requestAnimationFrame(() => {
+		// Use this pane's own window (pop-out support): flush when it blurs,
+		// and restore focus on its next frame.
+		const win = root.ownerDocument.defaultView ?? window;
+		this.registerDomEvent(win, "blur", () => {
+			void session.writer.flush();
+		});
+		win.requestAnimationFrame(() => {
 			if (this.root === root) session.focus.restoreTo(root);
 		});
 	}
@@ -202,7 +211,7 @@ export class PlannerView extends MarkdownRenderChild {
 	private mountLists(container: HTMLElement): void {
 		const placeholder = el(container, "div", "tb-lists-loading", "");
 		void this.deps.getLists().then((listsSession) => {
-			if (!this.root || !this.root.contains(container)) return;
+			if (this.unloaded || !this.root || !this.root.contains(container)) return;
 			placeholder.remove();
 			if (!listsSession) {
 				renderErrorCard(
@@ -212,35 +221,40 @@ export class PlannerView extends MarkdownRenderChild {
 				);
 				return;
 			}
-			if (listsSession.data === null) {
-				renderErrorCard(
-					container,
-					"Lists need attention",
-					`The lists block in "${listsSession.path}" has invalid YAML.`
-				);
-				return;
-			}
-			const sectionHost = el(container, "div");
-			const listsSection = new ListsSection(sectionHost, {
-				data: listsSession.data,
-				showCompleted: false,
-				now: () => localIsoTimestamp(),
-				changed: () => {
-					if (listsSession.data)
-						listsSession.writer.queue(serializeLists(listsSession.data));
-				},
-				refresh: () => {
-					this.withFocusPreserved(() => listsSection.render());
-					for (const listener of listsSession.listeners) {
-						if (listener !== refreshListener) listener();
-					}
-				},
-			});
-			const refreshListener = () =>
-				this.withFocusPreserved(() => listsSection.render());
+			const host = el(container, "div");
+			// Rebuilt from scratch on every session notification so the UI is
+			// always bound to the CURRENT session.data object — after an
+			// external change replaces it, a stale binding would silently
+			// drop edits (they'd mutate a dead object).
+			const mount = () => {
+				while (host.firstChild) host.removeChild(host.firstChild);
+				const data = listsSession.data;
+				if (data === null) {
+					renderErrorCard(
+						host,
+						"Lists need attention",
+						`The lists block in "${listsSession.path}" has invalid YAML. It will not be overwritten.`
+					);
+					return;
+				}
+				const listsSection = new ListsSection(host, {
+					data,
+					showCompleted: false,
+					now: () => localIsoTimestamp(),
+					changed: () => listsSession.writer.queue(serializeLists(data)),
+					refresh: () => {
+						this.withFocusPreserved(() => listsSection.render());
+						for (const listener of listsSession.listeners) {
+							if (listener !== refreshListener) listener();
+						}
+					},
+				});
+				listsSection.render();
+			};
+			const refreshListener = () => this.withFocusPreserved(mount);
 			listsSession.listeners.add(refreshListener);
 			this.register(() => listsSession.listeners.delete(refreshListener));
-			listsSection.render();
+			mount();
 		});
 	}
 }

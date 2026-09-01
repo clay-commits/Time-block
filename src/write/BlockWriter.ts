@@ -2,7 +2,7 @@
 // Only type-only imports from "obsidian" so this module stays headless-testable.
 
 import type { TFile } from "obsidian";
-import { findFencedBlock, replaceFencedBlock } from "../data/block";
+import { findFencedBlock, replaceFencedBlock, sameInner } from "../data/block";
 
 export interface Scheduler {
 	set(fn: () => void, delayMs: number): unknown;
@@ -129,6 +129,10 @@ export class BlockWriter {
 		if (!file) return;
 
 		let diverged: { disk: string | null } | null = null;
+		// lastWritten must only be committed AFTER vault.process resolves: a
+		// failed write with lastWritten already advanced would make the retry
+		// look like an external divergence and silently drop the edit.
+		let commitLastWritten: string | null = null;
 		try {
 			await this.vault.process(file, (content) => {
 				const found = findFencedBlock(content, this.lang);
@@ -137,17 +141,18 @@ export class BlockWriter {
 					diverged = { disk: null };
 					return content;
 				}
-				if (found.inner === inner) {
-					this.lastWritten = inner;
+				if (sameInner(found.inner, inner)) {
+					commitLastWritten = found.inner;
 					return content;
 				}
-				if (this.lastWritten != null && found.inner !== this.lastWritten) {
+				if (this.lastWritten != null && !sameInner(found.inner, this.lastWritten)) {
 					diverged = { disk: found.inner };
 					return content;
 				}
-				this.lastWritten = inner;
+				commitLastWritten = inner;
 				return replaceFencedBlock(content, found, inner);
 			});
+			if (commitLastWritten != null) this.lastWritten = commitLastWritten;
 		} catch (e) {
 			// Disk write failed (file gone, IO error): keep the payload pending and
 			// re-arm the debounce so it retries instead of silently losing the edit.

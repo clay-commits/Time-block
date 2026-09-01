@@ -20,7 +20,7 @@ export class TimeGrid {
 		while (this.container.firstChild) this.container.removeChild(this.container.firstChild);
 		const ctx = this.ctx;
 		const root = el(this.container, "div", "tb-section tb-grid");
-		el(root, "div", "tb-section-title", "The day, in 15s");
+		el(root, "div", "tb-section-title", `The day, in ${ctx.settings.slotMinutes}s`);
 		const scroll = el(root, "div", "tb-grid-scroll");
 		if (ctx.armedTaskId()) root.classList.add("tb-arming");
 

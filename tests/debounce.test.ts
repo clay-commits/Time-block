@@ -224,3 +224,48 @@ test("write failure keeps the payload pending for a retry", async () => {
 	await writer.flush(); // retry succeeds
 	assert.equal(findFencedBlock(vault.content, "timeblock")!.inner, "a: 2\n");
 });
+
+test("write-phase failure (callback ran, then write threw) retries WITHOUT false divergence", async () => {
+	const sched = new FakeScheduler();
+	class WritePhaseFailVault {
+		fails = 1;
+		content = "```timeblock\nold: 1\n```\n";
+		async process(_f: TFile, fn: (d: string) => string): Promise<string> {
+			const next = fn(this.content); // callback runs first, like Obsidian
+			if (this.fails-- > 0) throw new Error("disk full");
+			this.content = next;
+			return next;
+		}
+	}
+	const vault = new WritePhaseFailVault();
+	let diverged = false;
+	const writer = new BlockWriter(
+		vault as unknown as FakeVault,
+		() => FILE,
+		"timeblock",
+		() => (diverged = true),
+		800,
+		sched
+	);
+	writer.primeLastWritten("old: 1\n");
+	writer.queue("new: 2\n");
+	await writer.flush(); // write phase fails after callback ran
+	assert.equal(writer.hasPending, true, "payload retained for retry");
+	assert.equal(diverged, false);
+	sched.advance(800);
+	await writer.flush();
+	assert.equal(diverged, false, "retry must not be misread as divergence");
+	assert.equal(findFencedBlock(vault.content, "timeblock")!.inner, "new: 2\n");
+});
+
+test("CRLF disk content does not trigger false divergence", async () => {
+	const vault = new FakeVault("```timeblock\r\na: 1\r\n```\r\n");
+	const sched = new FakeScheduler();
+	let diverged = false;
+	const writer = makeWriter(vault, sched, () => (diverged = true));
+	writer.primeLastWritten("a: 1\n"); // hydrated from LF-normalized source
+	writer.queue("a: 2\n");
+	await writer.flush();
+	assert.equal(diverged, false);
+	assert.equal(findFencedBlock(vault.content, "timeblock")!.inner, "a: 2\n");
+});
