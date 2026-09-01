@@ -1,0 +1,29 @@
+{
+	"name": "timeblock-daily",
+	"version": "1.0.0",
+	"description": "Obsidian plugin: a daily planning page inside your daily note — goals, Big 6, task inbox with rollover, persistent lists, and a 15-minute time grid.",
+	"main": "main.js",
+	"type": "module",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "node esbuild.config.mjs production",
+		"typecheck": "tsc --noEmit",
+		"test": "node --import tsx --test tests/serializer.test.ts tests/block.test.ts tests/rollover.test.ts tests/slots.test.ts tests/debounce.test.ts"
+	},
+	"keywords": [],
+	"author": "clay-commits",
+	"license": "MIT",
+	"dependencies": {
+		"js-yaml": "^4.1.0"
+	},
+	"devDependencies": {
+		"@types/js-yaml": "^4.0.9",
+		"@types/node": "^22.5.0",
+		"builtin-modules": "^4.0.0",
+		"esbuild": "^0.24.0",
+		"moment": "^2.29.4",
+		"obsidian": "^1.7.2",
+		"tsx": "^4.19.0",
+		"typescript": "^5.6.0"
+	}
+}
