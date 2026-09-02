@@ -108,3 +108,23 @@ test("previousDates rejects invalid input", () => {
 	assert.deepEqual(previousDates("2026-09-01", 0), []);
 	assert.deepEqual(previousDates("2026-09-01", -5), []);
 });
+
+test("adopted vault tasks keep their source (and line hint) when carried over", () => {
+	const prev = emptyDay("2026-09-01");
+	prev.tasks = [
+		{
+			id: "t-src",
+			text: "Call the bank",
+			created: "2026-09-01T09:00:00-06:00",
+			completed: null,
+			source: { path: "Projects/Money.md", line: "- [ ] Call the bank", lineNumber: 12 },
+		},
+	];
+	const day = seedDay("2026-09-02", prev);
+	assert.deepEqual(day.tasks[0]!.source, {
+		path: "Projects/Money.md",
+		line: "- [ ] Call the bank",
+		lineNumber: 12,
+	});
+	assert.equal(day.tasks[0]!.carriedFrom, "2026-09-01");
+});

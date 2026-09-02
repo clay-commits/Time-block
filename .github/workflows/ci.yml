@@ -22,7 +22,7 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Test
-        run: node --import tsx --test tests/serializer.test.ts tests/block.test.ts tests/rollover.test.ts tests/slots.test.ts tests/debounce.test.ts
+        run: node --import tsx --test tests/serializer.test.ts tests/block.test.ts tests/rollover.test.ts tests/slots.test.ts tests/debounce.test.ts tests/vaultTasks.test.ts tests/report.test.ts
 
       - name: Build
         run: node esbuild.config.mjs production

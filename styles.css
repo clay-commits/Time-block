@@ -339,3 +339,101 @@
 	color: var(--text-faint);
 	font-size: var(--font-ui-smaller);
 }
+
+/* ---------------------------------------------------------------------------
+   1.1.0 — "actually" lane, vault task inbox, review report modal
+   --------------------------------------------------------------------------- */
+
+.tb-slot .tb-slot-actual {
+	flex: 0 1 42%;
+	border-bottom: none;
+	border-left: 1px solid var(--background-modifier-border);
+	padding: 0 var(--size-2-2);
+	color: var(--text-muted);
+}
+.tb-slot .tb-slot-actual:focus {
+	color: var(--text-normal);
+	border-left-color: var(--interactive-accent);
+}
+.tb-root.tb-narrow .tb-slot .tb-slot-actual {
+	flex-basis: 40%;
+}
+
+/* Vault task inbox */
+.tb-filter-bar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-2-2);
+	align-items: center;
+	margin-bottom: var(--size-2-3);
+}
+.tb-filter-bar input.tb-text {
+	flex: 1 1 8em;
+	min-width: 6em;
+}
+.tb-root .tb-filter-bar select {
+	font-size: var(--font-ui-smaller);
+	height: auto;
+	padding: 2px var(--size-2-2);
+	max-width: 11em;
+}
+.tb-vault-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-2-1);
+}
+.tb-vault-row {
+	align-items: flex-start;
+}
+.tb-vault-main {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+.tb-vault-text {
+	cursor: pointer;
+	overflow-wrap: anywhere;
+}
+.tb-vault-text:hover {
+	text-decoration: underline;
+}
+.tb-vault-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-2-2);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+}
+.tb-due-overdue {
+	color: var(--text-error);
+	font-weight: 600;
+}
+.tb-due-today {
+	color: var(--interactive-accent);
+	font-weight: 600;
+}
+.tb-vault-empty,
+.tb-vault-status {
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+	padding: var(--size-2-1) 0;
+}
+.tb-vault-count {
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+	margin-left: auto;
+}
+
+/* Review report modal */
+.tb-report-modal .tb-report-hint {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	margin-bottom: var(--size-4-2);
+}
+.tb-report-modal .tb-report-error {
+	color: var(--text-error);
+	font-size: var(--font-ui-smaller);
+	min-height: 1.2em;
+}

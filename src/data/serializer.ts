@@ -99,13 +99,21 @@ function orderedTask(t: Task): Record<string, unknown> {
 	};
 	if (t.carriedFrom) o.carriedFrom = t.carriedFrom;
 	if (t.slot) o.slot = t.slot;
+	if (t.source) {
+		const src: Record<string, unknown> = { path: t.source.path, line: t.source.line };
+		if (typeof t.source.lineNumber === "number") src.lineNumber = t.source.lineNumber;
+		o.source = src;
+	}
 	return o;
 }
 
 function orderedBlock(b: Block): Record<string, unknown> {
 	const o: Record<string, unknown> = { text: b.text };
+	if (b.actual !== undefined && b.actual !== "") o.actual = b.actual;
 	if (b.taskId) o.taskId = b.taskId;
 	o.created = b.created;
+	if (b.actual !== undefined && b.actual !== "" && b.actualCreated)
+		o.actualCreated = b.actualCreated;
 	return o;
 }
 
@@ -167,6 +175,15 @@ function parseTask(v: unknown, index: number): Task | null {
 	if (carriedFrom) t.carriedFrom = carriedFrom;
 	const slotMinutes = parseHM(asString(v.slot, ""));
 	if (slotMinutes != null) t.slot = formatHM(slotMinutes);
+	if (isRecord(v.source)) {
+		const path = asString(v.source.path, "");
+		const line = asString(v.source.line, "");
+		if (path !== "" && line !== "") {
+			t.source = { path, line };
+			const ln = v.source.lineNumber;
+			if (typeof ln === "number" && Number.isInteger(ln) && ln >= 0) t.source.lineNumber = ln;
+		}
+	}
 	return t;
 }
 
@@ -179,6 +196,12 @@ function parseBlock(v: unknown): Block | null {
 		text: asString(v.text, ""),
 		created: asStamp(v.created),
 	};
+	const actual = asString(v.actual, "");
+	if (actual !== "") {
+		block.actual = actual;
+		const actualCreated = asStamp(v.actualCreated);
+		if (actualCreated !== "") block.actualCreated = actualCreated;
+	}
 	const taskId = asString(v.taskId, "");
 	if (taskId) block.taskId = taskId;
 	return block;
@@ -230,7 +253,9 @@ export function normalizeDay(day: DayData): DayData {
 	}
 	for (const key of Object.keys(day.blocks)) {
 		const b = day.blocks[key];
-		if (b && !b.taskId && b.text.trim() === "") delete day.blocks[key];
+		if (!b) continue;
+		const hasActual = (b.actual ?? "").trim() !== "";
+		if (!b.taskId && b.text.trim() === "" && !hasActual) delete day.blocks[key];
 	}
 	return day;
 }

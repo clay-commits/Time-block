@@ -71,7 +71,7 @@ export function dateForDailyPath(
 	return m.isValid() ? m.format("YYYY-MM-DD") : null;
 }
 
-async function ensureFolderExists(app: App, filePath: string): Promise<void> {
+export async function ensureFolderExists(app: App, filePath: string): Promise<void> {
 	const parts = filePath.split("/").slice(0, -1);
 	let current = "";
 	for (const part of parts) {

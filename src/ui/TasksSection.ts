@@ -55,6 +55,7 @@ export class TasksSection {
 			task.completed = checked ? ctx.now() : null;
 			row.classList.toggle("tb-done", checked);
 			ctx.changed();
+			if (checked && task.source) ctx.completeSource(task);
 		});
 
 		textInput(row, {
@@ -68,6 +69,10 @@ export class TasksSection {
 		});
 
 		const meta = el(row, "span", "tb-row-meta");
+		if (task.source) {
+			const note = task.source.path.split("/").pop()?.replace(/\.md$/, "") ?? task.source.path;
+			badge(meta, `from ${note}`, "tb-badge-carried", task.source.path);
+		}
 		if (task.carriedFrom) {
 			badge(meta, "carried over", "tb-badge-carried", `First entered ${task.carriedFrom}`);
 		}
