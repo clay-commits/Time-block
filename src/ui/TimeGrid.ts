@@ -5,6 +5,10 @@ import { parseHM, slotContaining, slotStarts } from "../data/slots";
 import { el, iconButton } from "./components";
 import type { PlannerCtx } from "./PlannerView";
 
+function isBlockEmpty(b: Block): boolean {
+	return !b.taskId && b.text.trim() === "" && (b.actual ?? "").trim() === "";
+}
+
 /**
  * The 15-minute breakdown of the day: a vertical grid of slots with free text
  * per slot, plus click-to-assign task placement in both directions (armed task
@@ -86,10 +90,34 @@ export class TimeGrid {
 			const existing = day.blocks[slot];
 			if (existing) {
 				existing.text = value;
-				if (value.trim() === "" && !existing.taskId) delete day.blocks[slot];
+				if (isBlockEmpty(existing)) delete day.blocks[slot];
 			} else if (value.trim() !== "") {
 				day.blocks[slot] = { text: value, created: ctx.now() };
 			}
+			ctx.changed();
+		});
+
+		// The "actually" lane: what really happened in this slot.
+		const actual = el(content, "input", "tb-text tb-slot-actual");
+		actual.type = "text";
+		actual.value = block?.actual ?? "";
+		actual.placeholder = "actually…";
+		actual.setAttribute("data-tb-id", `actual-${slot}`);
+		actual.setAttribute("aria-label", `What actually happened at ${slot}`);
+		actual.setAttribute("spellcheck", "false");
+		actual.addEventListener("input", () => {
+			const value = actual.value;
+			let existing = day.blocks[slot];
+			if (!existing) {
+				if (value.trim() === "") return;
+				existing = { text: "", created: ctx.now() };
+				day.blocks[slot] = existing;
+			}
+			existing.actual = value;
+			if (value.trim() !== "" && !existing.actualCreated) {
+				existing.actualCreated = ctx.now();
+			}
+			if (isBlockEmpty(existing)) delete day.blocks[slot];
 			ctx.changed();
 		});
 
@@ -172,7 +200,13 @@ export class TimeGrid {
 				line,
 				"span",
 				"tb-outside-text",
-				[task ? `[${task.text}]` : "", b.text].filter(Boolean).join(" ")
+				[
+					task ? `[${task.text}]` : "",
+					b.text,
+					b.actual ? `— actually: ${b.actual}` : "",
+				]
+					.filter(Boolean)
+					.join(" ")
 			);
 		}
 	}

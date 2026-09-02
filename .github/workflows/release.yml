@@ -67,7 +67,7 @@ jobs:
         if: steps.tag.outputs.exists == 'false'
         run: |
           npx tsc --noEmit
-          node --import tsx --test tests/serializer.test.ts tests/block.test.ts tests/rollover.test.ts tests/slots.test.ts tests/debounce.test.ts
+          node --import tsx --test tests/serializer.test.ts tests/block.test.ts tests/rollover.test.ts tests/slots.test.ts tests/debounce.test.ts tests/vaultTasks.test.ts tests/report.test.ts
 
       - name: Build
         if: steps.tag.outputs.exists == 'false'

@@ -14,7 +14,16 @@ import {
 	DEFAULT_SETTINGS,
 	TimeblockSettingTab,
 	TimeblockSettings,
+	mergeSettings,
 } from "./settings";
+import {
+	VaultTaskScanner,
+	completeInSource,
+	openVaultTask,
+} from "./vault/vaultTasks";
+import { buildReviewReport } from "./vault/report";
+import { ReportModal } from "./ui/ReportModal";
+import type { VaultTaskServices } from "./ui/VaultTasksSection";
 import {
 	dateForDailyPath,
 	ensureListsFile,
@@ -39,9 +48,11 @@ export default class TimeblockPlugin extends Plugin {
 	private configuredListsPromise: Promise<ListsSession | null> | null = null;
 	private configuredListsPath: string | null = null;
 	private ribbonIconEl: HTMLElement | null = null;
+	private scanner: VaultTaskScanner = null as unknown as VaultTaskScanner;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
+		this.scanner = new VaultTaskScanner(this.app);
 
 		this.registerMarkdownCodeBlockProcessor("timeblock", (source, el, ctx) =>
 			this.renderDayBlock(source, el, ctx)
@@ -58,6 +69,11 @@ export default class TimeblockPlugin extends Plugin {
 				void this.openToday();
 			},
 		});
+		this.addCommand({
+			id: "build-review-report",
+			name: "Build review report…",
+			callback: () => this.openReportModal(),
+		});
 		this.refreshRibbon();
 		this.addSettingTab(new TimeblockSettingTab(this.app, this));
 
@@ -72,7 +88,12 @@ export default class TimeblockPlugin extends Plugin {
 		});
 
 		this.registerEvent(
+			this.app.vault.on("modify", (file) => this.scanner.invalidate(file.path))
+		);
+		this.registerEvent(
 			this.app.vault.on("rename", (file, oldPath) => {
+				this.scanner.invalidate(oldPath);
+				this.scanner.invalidate(file.path);
 				const day = this.daySessions.get(oldPath);
 				if (day) {
 					this.daySessions.delete(oldPath);
@@ -91,6 +112,7 @@ export default class TimeblockPlugin extends Plugin {
 		);
 		this.registerEvent(
 			this.app.vault.on("delete", (file) => {
+				this.scanner.invalidate(file.path);
 				this.daySessions.delete(file.path);
 				this.listsSessions.delete(file.path);
 				if (this.configuredListsPath === file.path) {
@@ -112,8 +134,35 @@ export default class TimeblockPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		const stored = (await this.loadData()) as Partial<TimeblockSettings> | null;
-		this.settings = { ...DEFAULT_SETTINGS, ...(stored ?? {}) };
+		this.settings = mergeSettings(await this.loadData());
+	}
+
+	/** Services the planner's "From your vault" panel needs. */
+	vaultTaskServices(): VaultTaskServices {
+		return {
+			scan: () => this.scanner.scan(this.settings),
+			complete: (source) => completeInSource(this.app, source),
+			open: (task) => openVaultTask(this.app, task),
+			saveSettings: () => this.saveSettings(),
+			notice: (message) => {
+				new Notice(message);
+			},
+		};
+	}
+
+	openReportModal(): void {
+		const end = moment().format("YYYY-MM-DD");
+		const start = moment().subtract(6, "days").format("YYYY-MM-DD");
+		new ReportModal(this.app, { start, end }, async (from, to) => {
+			try {
+				await this.flushAll();
+				const file = await buildReviewReport(this.app, this.settings, from, to);
+				await this.app.workspace.getLeaf(false).openFile(file);
+			} catch (e) {
+				console.error("Timeblock Daily: report failed", e);
+				new Notice("Timeblock Daily: couldn't build the report — see the console.");
+			}
+		}).open();
 	}
 
 	async saveSettings(): Promise<void> {
@@ -252,6 +301,7 @@ export default class TimeblockPlugin extends Plugin {
 			settings: this.settings,
 			session,
 			getLists: () => this.getConfiguredListsSession(),
+			vaultTasks: this.vaultTaskServices(),
 		});
 		ctx.addChild(child);
 	}

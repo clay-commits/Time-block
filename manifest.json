@@ -1,7 +1,7 @@
 {
 	"id": "timeblock-daily",
 	"name": "Timeblock Daily",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"minAppVersion": "1.4.0",
 	"description": "A daily planning page inside your daily note: top 3 goals, the Big 6, a task inbox with automatic rollover, persistent lists, and a 15-minute time grid — every entry timestamped.",
 	"author": "clay-commits",

@@ -24,6 +24,19 @@ personal lives in this repository.
 - **The day, in 15s** — a vertical grid from 06:00 to 22:00 (configurable) in
   15- or 30-minute slots. Type into any slot, or place a task on a slot with a
   click (from the task's clock button, or a slot's + menu).
+- **From your vault** — every unchecked `- [ ]` line anywhere in your notes,
+  under a filter bar (search, tag, folder, due date, sort). Tick one and its
+  original line becomes `- [x] … ✅ 2026-09-02 14:35`; the completion is also
+  recorded in today's planner. The clock button brings a vault task into today
+  so you can place it on the grid. In settings you choose which folders or
+  notes to scan or skip (Timeblock's own files and `Templates/` are skipped by
+  default).
+- **Actually…** — every time slot has a second field beside the plan for what
+  really happened, stamped the first time you write in it.
+- **Review report** — the command "Build review report…" asks for a date
+  range (pre-filled with the last 7 days) and writes a readable note to
+  `Timeblock/Reviews/` with a scorecard, goal consistency, aging carried-over
+  tasks, and a day-by-day timeline of what was done when.
 - **Everything is trackable.** Every goal, Big 6 item, task, list item, and slot
   entry carries created/completed timestamps (ISO-8601, with your local UTC
   offset) and its slot placement — all stored as readable YAML in a fenced
@@ -57,6 +70,8 @@ items).
   (honoring your core Daily notes folder, format, and template), adds the
   planner block, carries over unfinished tasks, and opens it.
 - Optional: turn on **Open today's planner on startup** in the plugin settings.
+- Run **"Build review report…"** from the command palette for a look back over
+  any date range.
 
 ### Settings
 
@@ -69,6 +84,9 @@ items).
 | Open on startup | off |
 | Ribbon icon | on |
 | Daily folder/format override | blank (follows the core Daily notes plugin) |
+| Show tasks from your vault | on |
+| Only scan / never scan | blank / `Timeblock`, `Templates` |
+| Reports folder | `Timeblock/Reviews` |
 
 ## Install (via BRAT)
 

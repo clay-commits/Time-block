@@ -296,3 +296,65 @@ test("non-zero-padded slots and block keys canonicalize to HH:MM", () => {
 	assert.equal(day.blocks["06:15"]!.text, "coffee");
 	assert.equal(Object.keys(day.blocks).includes("6:15"), false);
 });
+
+// ---------------------------------------------------------------------------
+// 1.1.0: "actually" lane and adopted-task sources
+// ---------------------------------------------------------------------------
+
+test('blocks round-trip the "actually" lane with its own stamp', () => {
+	const day = emptyDay("2026-09-02");
+	day.blocks["09:00"] = {
+		text: "deep work",
+		actual: "email instead",
+		created: "2026-09-02T06:00:00-06:00",
+		actualCreated: "2026-09-02T09:40:00-06:00",
+	};
+	day.blocks["10:00"] = {
+		text: "",
+		actual: "walk",
+		created: "2026-09-02T10:05:00-06:00",
+		actualCreated: "2026-09-02T10:05:00-06:00",
+	};
+	const yaml = serializeDay(day);
+	const back = parseDay(yaml, "2026-09-02");
+	assert.deepEqual(back.blocks["09:00"], day.blocks["09:00"]);
+	// a block with only an "actually" entry survives normalization (not pruned)
+	assert.deepEqual(back.blocks["10:00"], day.blocks["10:00"]);
+	assert.equal(yaml, serializeDay(back));
+});
+
+test("an empty actually lane is omitted and its stamp not written", () => {
+	const day = emptyDay("2026-09-02");
+	day.blocks["09:00"] = {
+		text: "plan",
+		actual: "",
+		created: "c",
+		actualCreated: "should-not-appear",
+	};
+	const yaml = serializeDay(day);
+	assert.ok(!yaml.includes("actualCreated"));
+	assert.ok(!yaml.includes("should-not-appear"));
+	const back = parseDay(yaml, "2026-09-02");
+	assert.equal(back.blocks["09:00"]!.actual, undefined);
+});
+
+test("adopted vault tasks keep their source note and line", () => {
+	const day = emptyDay("2026-09-02");
+	day.tasks.push({
+		id: "t1",
+		text: "Call the bank",
+		created: "c",
+		completed: null,
+		source: { path: "Projects/Money.md", line: "- [ ] Call the bank #work 📅 2026-09-03" },
+	});
+	const yaml = serializeDay(day);
+	const back = parseDay(yaml, "2026-09-02");
+	assert.deepEqual(back.tasks[0]!.source, day.tasks[0]!.source);
+	assert.equal(yaml, serializeDay(back));
+	// a malformed source is dropped rather than fatal
+	const bad = parseDay(
+		["date: 2026-09-02", "tasks:", "  - {id: t2, text: x, created: c, source: {path: only}}"].join("\n"),
+		"2026-09-02"
+	);
+	assert.equal(bad.tasks[0]!.source, undefined);
+});

@@ -11,6 +11,7 @@ import { Big6Section } from "./Big6Section";
 import { TasksSection } from "./TasksSection";
 import { ListsSection } from "./ListsSection";
 import { TimeGrid } from "./TimeGrid";
+import { VaultTaskServices, VaultTasksSection } from "./VaultTasksSection";
 
 // Sessions live on the plugin, keyed by file path, so the in-memory model,
 // pending writes, armed state, and focus snapshot all survive the widget
@@ -45,6 +46,8 @@ export interface PlannerCtx {
 	armTask(id: string | null): void;
 	refreshTasks(): void;
 	refreshGrid(): void;
+	/** Mark an adopted vault task done in its original note (fire-and-forget). */
+	completeSource(task: { source?: { path: string; line: string } }): void;
 }
 
 export interface PlannerDeps {
@@ -52,6 +55,7 @@ export interface PlannerDeps {
 	settings: TimeblockSettings;
 	session: DaySession;
 	getLists: () => Promise<ListsSession | null>;
+	vaultTasks: VaultTaskServices;
 }
 
 export function renderErrorCard(
@@ -97,6 +101,16 @@ export class PlannerView extends MarkdownRenderChild {
 			},
 			refreshTasks: () => this.withFocusPreserved(() => this.tasksSection?.render()),
 			refreshGrid: () => this.withFocusPreserved(() => this.timeGrid?.render()),
+			completeSource: (task) => {
+				if (!task.source) return;
+				void this.deps.vaultTasks.complete(task.source).then((result) => {
+					if (result === "missing") {
+						this.deps.vaultTasks.notice(
+							"Done here, but its original line wasn't found in the note anymore."
+						);
+					}
+				});
+			},
 		};
 	}
 
@@ -156,6 +170,7 @@ export class PlannerView extends MarkdownRenderChild {
 		const goalsC = el(left, "div", "tb-slot-goals");
 		const big6C = el(left, "div", "tb-slot-big6");
 		const tasksC = el(left, "div", "tb-slot-tasks");
+		const vaultC = el(left, "div", "tb-slot-vault");
 		const listsC = el(left, "div", "tb-slot-lists");
 		const notesC = el(left, "div", "tb-slot-notes");
 		const gridC = el(right, "div", "tb-slot-grid");
@@ -164,6 +179,13 @@ export class PlannerView extends MarkdownRenderChild {
 		new Big6Section(big6C, ctx).render();
 		this.tasksSection = new TasksSection(tasksC, ctx);
 		this.tasksSection.render();
+		if (settings.showVaultTasks) {
+			new VaultTasksSection(vaultC, {
+				...ctx,
+				services: this.deps.vaultTasks,
+				today: () => moment().format("YYYY-MM-DD"),
+			}).render();
+		}
 		this.mountLists(listsC);
 		this.mountNotes(notesC, ctx);
 		this.timeGrid = new TimeGrid(gridC, ctx);
