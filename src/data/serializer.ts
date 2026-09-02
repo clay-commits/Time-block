@@ -99,7 +99,11 @@ function orderedTask(t: Task): Record<string, unknown> {
 	};
 	if (t.carriedFrom) o.carriedFrom = t.carriedFrom;
 	if (t.slot) o.slot = t.slot;
-	if (t.source) o.source = { path: t.source.path, line: t.source.line };
+	if (t.source) {
+		const src: Record<string, unknown> = { path: t.source.path, line: t.source.line };
+		if (typeof t.source.lineNumber === "number") src.lineNumber = t.source.lineNumber;
+		o.source = src;
+	}
 	return o;
 }
 
@@ -174,7 +178,11 @@ function parseTask(v: unknown, index: number): Task | null {
 	if (isRecord(v.source)) {
 		const path = asString(v.source.path, "");
 		const line = asString(v.source.line, "");
-		if (path !== "" && line !== "") t.source = { path, line };
+		if (path !== "" && line !== "") {
+			t.source = { path, line };
+			const ln = v.source.lineNumber;
+			if (typeof ln === "number" && Number.isInteger(ln) && ln >= 0) t.source.lineNumber = ln;
+		}
 	}
 	return t;
 }

@@ -1,5 +1,5 @@
 import { App, MarkdownRenderChild, moment } from "obsidian";
-import { DayData, ListsData } from "../data/types";
+import { DayData, ListsData, TaskSource } from "../data/types";
 import { localIsoTimestamp } from "../data/ids";
 import { serializeDay, serializeLists } from "../data/serializer";
 import { BlockWriter } from "../write/BlockWriter";
@@ -47,7 +47,7 @@ export interface PlannerCtx {
 	refreshTasks(): void;
 	refreshGrid(): void;
 	/** Mark an adopted vault task done in its original note (fire-and-forget). */
-	completeSource(task: { source?: { path: string; line: string } }): void;
+	completeSource(task: { source?: TaskSource }): void;
 }
 
 export interface PlannerDeps {
@@ -103,13 +103,21 @@ export class PlannerView extends MarkdownRenderChild {
 			refreshGrid: () => this.withFocusPreserved(() => this.timeGrid?.render()),
 			completeSource: (task) => {
 				if (!task.source) return;
-				void this.deps.vaultTasks.complete(task.source).then((result) => {
-					if (result === "missing") {
+				void this.deps.vaultTasks.complete(task.source).then(
+					(result) => {
+						if (result === "missing") {
+							this.deps.vaultTasks.notice(
+								"Done here, but its original line wasn't found in the note anymore."
+							);
+						}
+					},
+					(e) => {
+						console.error("Timeblock Daily: could not complete task in its note", e);
 						this.deps.vaultTasks.notice(
-							"Done here, but its original line wasn't found in the note anymore."
+							"Done here, but the original note couldn't be updated — see the console."
 						);
 					}
-				});
+				);
 			},
 		};
 	}

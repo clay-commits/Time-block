@@ -90,6 +90,11 @@ export default class TimeblockPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => this.scanner.invalidate(file.path))
 		);
+		// The metadata cache updates after the file does; a scan in between
+		// would pin stale list items under the new mtime.
+		this.registerEvent(
+			this.app.metadataCache.on("changed", (file) => this.scanner.invalidate(file.path))
+		);
 		this.registerEvent(
 			this.app.vault.on("rename", (file, oldPath) => {
 				this.scanner.invalidate(oldPath);

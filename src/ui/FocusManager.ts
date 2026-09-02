@@ -11,11 +11,16 @@ export interface FocusSnapshot {
 }
 
 type Editable = HTMLInputElement | HTMLTextAreaElement;
+type Focusable = Editable | HTMLSelectElement;
 
 function isEditable(node: Element | null): node is Editable {
 	return (
 		node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
 	);
+}
+
+function isFocusable(node: Element | null): node is Focusable {
+	return isEditable(node) || node instanceof HTMLSelectElement;
 }
 
 export class FocusManager {
@@ -70,12 +75,12 @@ export class FocusManager {
 				: s.tbId.replace(/"/g, '\\"');
 		const holder = root.querySelector(`[data-tb-id="${escaped}"]`);
 		if (!holder) return;
-		const target = isEditable(holder)
+		const target = isFocusable(holder)
 			? holder
-			: holder.querySelector("input, textarea");
-		if (!isEditable(target)) return;
+			: holder.querySelector("input, textarea, select");
+		if (!isFocusable(target)) return;
 		target.focus({ preventScroll: true });
-		if (s.selStart != null) {
+		if (isEditable(target) && s.selStart != null) {
 			const len = target.value.length;
 			const start = Math.min(s.selStart, len);
 			const end = Math.min(s.selEnd ?? start, len);

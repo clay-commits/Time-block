@@ -54,8 +54,13 @@ export class ReportModal extends Modal {
 						error.setText("Both dates are needed, as YYYY-MM-DD.");
 						return;
 					}
-					if (dateRange(start, end).length === 0) {
-						error.setText("The end date must be on or after the start date (and within a year).");
+					const range = dateRange(start, end);
+					if (range.length === 0) {
+						error.setText("The end date must be on or after the start date.");
+						return;
+					}
+					if (range[range.length - 1] !== end) {
+						error.setText("Please keep the range within one year (366 days).");
 						return;
 					}
 					btn.setDisabled(true);

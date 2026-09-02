@@ -19,6 +19,7 @@ export async function buildReviewReport(
 ): Promise<TFile> {
 	const dates = dateRange(start, end);
 	if (dates.length === 0) throw new Error("Invalid date range");
+	if (dates[dates.length - 1] !== end) throw new Error("Date range longer than a year");
 	const config = getDailyConfig(app, settings);
 
 	const days: ReportDay[] = [];
@@ -38,7 +39,8 @@ export async function buildReviewReport(
 			continue;
 		}
 		const found = findFencedBlock(content, "timeblock");
-		if (!found) {
+		if (!found || found.inner.trim() === "") {
+			// No block, or an unseeded template block: not a planner day.
 			days.push({ date, day: null });
 			continue;
 		}

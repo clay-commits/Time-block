@@ -1,7 +1,12 @@
 import { App, TFile } from "obsidian";
 import type { TimeblockSettings } from "../settings";
-import { VaultTask } from "../data/types";
-import { completeTaskLine, folderRulesAllow, parseTaskLine } from "../data/vaultTasks";
+import { TaskSource, VaultTask } from "../data/types";
+import {
+	completeTaskLine,
+	folderRulesAllow,
+	locateTaskLine,
+	parseTaskLine,
+} from "../data/vaultTasks";
 import { localIsoTimestamp } from "../data/ids";
 
 interface CacheEntry {
@@ -37,21 +42,21 @@ export class VaultTaskScanner {
 
 	async scan(settings: TimeblockSettings): Promise<VaultTask[]> {
 		const out: VaultTask[] = [];
+		// Generated review reports are never a source of tasks.
+		const excludes = [...settings.vaultTaskExcludeFolders, settings.reportsFolder];
 		for (const file of this.app.vault.getMarkdownFiles()) {
-			if (
-				!folderRulesAllow(
-					file.path,
-					settings.vaultTaskIncludeFolders,
-					settings.vaultTaskExcludeFolders
-				)
-			)
+			if (!folderRulesAllow(file.path, settings.vaultTaskIncludeFolders, excludes))
 				continue;
 			const meta = this.app.metadataCache.getFileCache(file);
 			const openItems = (meta?.listItems ?? []).filter((li) => li.task === " ");
 			if (openItems.length === 0) continue;
 
+			// Snapshot the stat BEFORE reading so a write that lands during the
+			// read is not pinned under the new mtime with old contents.
+			const mtime = file.stat.mtime;
+			const size = file.stat.size;
 			const cached = this.cache.get(file.path);
-			if (cached && cached.mtime === file.stat.mtime && cached.size === file.stat.size) {
+			if (cached && cached.mtime === mtime && cached.size === size) {
 				out.push(...cached.tasks);
 				continue;
 			}
@@ -72,7 +77,7 @@ export class VaultTaskScanner {
 				const task = parseTaskLine(raw, file.path, lineNumber, fallbackCreated);
 				if (task && !task.done) tasks.push(task);
 			}
-			this.cache.set(file.path, { mtime: file.stat.mtime, size: file.stat.size, tasks });
+			this.cache.set(file.path, { mtime, size, tasks });
 			out.push(...tasks);
 		}
 		return out;
@@ -88,24 +93,27 @@ export type CompleteResult = "done" | "already" | "missing";
  */
 export async function completeInSource(
 	app: App,
-	source: { path: string; line: string },
+	source: TaskSource,
 	stamp: string = completionStamp()
 ): Promise<CompleteResult> {
 	const file = app.vault.getAbstractFileByPath(source.path);
 	if (!(file instanceof TFile)) return "missing";
 	let result: CompleteResult = "missing";
-	const target = source.line.replace(/\r$/, "");
 	await app.vault.process(file, (content) => {
 		const lines = content.split("\n");
-		const idx = lines.findIndex((l) => l.replace(/\r$/, "") === target);
-		if (idx === -1) return content;
-		const current = lines[idx]!;
+		const found = locateTaskLine(lines, source.line, source.lineNumber);
+		if (!found) return content;
+		if (found.state === "completed") {
+			result = "already";
+			return content;
+		}
+		const current = lines[found.index]!;
 		const updated = completeTaskLine(current, stamp);
 		if (updated === current) {
 			result = "already";
 			return content;
 		}
-		lines[idx] = updated;
+		lines[found.index] = updated;
 		result = "done";
 		return lines.join("\n");
 	});

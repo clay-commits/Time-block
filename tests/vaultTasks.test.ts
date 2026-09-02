@@ -732,3 +732,43 @@ test("addDays and daysBetween agree with each other", () => {
 		assert.equal(daysBetween("2026-09-02", addDays("2026-09-02", n)), n, String(n));
 	}
 });
+
+// ---------------------------------------------------------------------------
+// locateTaskLine / isCompletedVariant (review-pass additions)
+// ---------------------------------------------------------------------------
+
+import { isCompletedVariant, locateTaskLine } from "../src/data/vaultTasks";
+
+test("locateTaskLine skips lines inside fenced code blocks", () => {
+	const lines = ["# Notes", "```", "- [ ] Buy milk", "```", "- [ ] Buy milk", ""];
+	assert.deepEqual(locateTaskLine(lines, "- [ ] Buy milk"), { index: 4, state: "open" });
+	const tilde = ["~~~md", "- [ ] Buy milk", "~~~", "- [ ] Buy milk"];
+	assert.deepEqual(locateTaskLine(tilde, "- [ ] Buy milk"), { index: 3, state: "open" });
+	const onlyFenced = ["```", "- [ ] Buy milk", "```"];
+	assert.equal(locateTaskLine(onlyFenced, "- [ ] Buy milk"), null);
+});
+
+test("locateTaskLine prefers the hinted line among duplicates", () => {
+	const lines = ["- [ ] Call mom", "- [ ] Other", "- [ ] Call mom"];
+	assert.deepEqual(locateTaskLine(lines, "- [ ] Call mom", 2), { index: 2, state: "open" });
+	assert.deepEqual(locateTaskLine(lines, "- [ ] Call mom", 0), { index: 0, state: "open" });
+	// stale hint pointing elsewhere falls back to the first exact match
+	assert.deepEqual(locateTaskLine(lines, "- [ ] Call mom", 1), { index: 0, state: "open" });
+	assert.deepEqual(locateTaskLine(lines, "- [ ] Call mom", 99), { index: 0, state: "open" });
+});
+
+test("locateTaskLine recognises an already-completed variant (tick → untick → tick)", () => {
+	const lines = ["- [x] Call mom ✅ 2026-09-02 14:35", "- [ ] Other"];
+	assert.deepEqual(locateTaskLine(lines, "- [ ] Call mom"), { index: 0, state: "completed" });
+	assert.deepEqual(locateTaskLine(lines, "- [ ] Call mom", 0), { index: 0, state: "completed" });
+	assert.equal(locateTaskLine(["- [ ] Nope"], "- [ ] Call mom"), null);
+});
+
+test("isCompletedVariant matches [x]/[X] with or without a stamp, not other text", () => {
+	assert.ok(isCompletedVariant("- [x] a", "- [ ] a"));
+	assert.ok(isCompletedVariant("  * [X] a ✅ 2026-09-02 09:00", "  * [ ] a"));
+	assert.ok(isCompletedVariant("- [x] a\r", "- [ ] a"));
+	assert.ok(!isCompletedVariant("- [x] ab", "- [ ] a"));
+	assert.ok(!isCompletedVariant("- [ ] a", "- [ ] a"));
+	assert.ok(!isCompletedVariant("- [/] a", "- [ ] a"));
+});

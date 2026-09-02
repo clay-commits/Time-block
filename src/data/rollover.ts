@@ -32,6 +32,10 @@ export function seedDay(date: string, prev: DayData | null): DayData {
 			completed: null,
 			carriedFrom: t.carriedFrom ?? prev.date,
 		};
+		if (t.source) {
+			task.source = { path: t.source.path, line: t.source.line };
+			if (typeof t.source.lineNumber === "number") task.source.lineNumber = t.source.lineNumber;
+		}
 		carried.push(task);
 	}
 	day.tasks = carried;

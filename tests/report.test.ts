@@ -115,7 +115,8 @@ const GOLDEN = [
 	"| Measure | Value |",
 	"| --- | --- |",
 	"| Planned slots | 3 |",
-	'| Slots with "actually" filled in | 2 (67%) |',
+	'| Slots with "actually" filled in | 1 (33%) |',
+	'| Unplanned slots with an "actually" entry | 1 |',
 	"| Placed tasks done | 1 of 2 |",
 	"| Big 6 done | 1 of 3 |",
 	"| Tasks completed | 4 |",
@@ -124,7 +125,7 @@ const GOLDEN = [
 	"",
 	"| Day | Planned | Actually filled | Placed done | Big 6 done |",
 	"| --- | --- | --- | --- | --- |",
-	"| Tuesday, 2026-09-01 | 3 | 2 (67%) | 1 of 2 | 1 of 2 |",
+	"| Tuesday, 2026-09-01 | 3 | 1 (33%) | 1 of 2 | 1 of 2 |",
 	"| Wednesday, 2026-09-02 | 0 | 0 (–) | 0 of 0 | 0 of 1 |",
 	"",
 	"## Goals",
@@ -152,8 +153,8 @@ const GOLDEN = [
 	"- Exercise",
 	"",
 	"**Big 6:**",
-	"- [x] Call the bank (done 11:00)",
-	"- [ ] Draft memo",
+	"- ☑ Call the bank (done 11:00)",
+	"- ☐ Draft memo",
 	"",
 	"**Done today:**",
 	"- 09:30 — Write report",
@@ -175,7 +176,7 @@ const GOLDEN = [
 	"- Read",
 	"",
 	"**Big 6:**",
-	"- [ ] Plan week",
+	"- ☐ Plan week",
 	"",
 	"**Done today:**",
 	"- 08:00 — Old thing (carried since 2026-08-30)",
@@ -272,7 +273,8 @@ test("timeOf: wall-clock from ISO local stamp, empty otherwise", () => {
 test("summarizeDay: counts from the fixture days", () => {
 	assert.deepEqual(summarizeDay(day1()), {
 		planned: 3,
-		actuallyFilled: 2,
+		actuallyFilled: 1,
+		unplannedActual: 1,
 		placedDone: 1,
 		placedTotal: 2,
 		big6Done: 1,
@@ -281,6 +283,7 @@ test("summarizeDay: counts from the fixture days", () => {
 	assert.deepEqual(summarizeDay(day2()), {
 		planned: 0,
 		actuallyFilled: 0,
+		unplannedActual: 0,
 		placedDone: 0,
 		placedTotal: 0,
 		big6Done: 0,
@@ -289,6 +292,7 @@ test("summarizeDay: counts from the fixture days", () => {
 	assert.deepEqual(summarizeDay(emptyDay("2026-09-01")), {
 		planned: 0,
 		actuallyFilled: 0,
+		unplannedActual: 0,
 		placedDone: 0,
 		placedTotal: 0,
 		big6Done: 0,
@@ -440,7 +444,7 @@ test("scorecard: per-day table has exactly one row per planner day", () => {
 		.split("\n")
 		.filter((l) => /^\| (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), /.test(l));
 	assert.deepEqual(rows, [
-		"| Tuesday, 2026-09-01 | 3 | 2 (67%) | 1 of 2 | 1 of 2 |",
+		"| Tuesday, 2026-09-01 | 3 | 1 (33%) | 1 of 2 | 1 of 2 |",
 		"| Friday, 2026-09-04 | 0 | 0 (–) | 0 of 0 | 0 of 1 |",
 	]);
 });
@@ -641,7 +645,7 @@ test("day by day: Big 6 checkboxes with completion time; time omitted when the s
 		{ id: "c", text: "open", created: "c", completed: null },
 	];
 	const out = buildReport([{ date: "2026-09-01", day: d }], { ...OPTS, end: "2026-09-01" });
-	assert.ok(out.includes("**Big 6:**\n- [x] done at time (done 07:45)\n- [x] done no time\n- [ ] open\n"));
+	assert.ok(out.includes("**Big 6:**\n- ☑ done at time (done 07:45)\n- ☑ done no time\n- ☐ open\n"));
 });
 
 test("day by day: plan vs actually looks tasks up by id and flags missing ones", () => {
@@ -690,7 +694,7 @@ test("markdown safety: pipes escaped and newlines collapsed in cells and bullets
 	assert.ok(out.includes("| Longest-carried task | 2 days — task\\|with pipe |"));
 	assert.ok(out.includes("- 2 days — task|with pipe (since 2026-08-30)"));
 	assert.ok(out.includes("- a|b goal\n"));
-	assert.ok(out.includes("- [ ] big|six line\n"));
+	assert.ok(out.includes("- ☐ big|six line\n"));
 	assert.ok(out.includes("- 10:00 — done|it now\n"));
 	assert.ok(!out.includes("\r"), "no carriage returns survive");
 	// A multi-line task text must never split a table row.
@@ -738,4 +742,19 @@ test("document ends with exactly one trailing newline and sections are in order"
 test("day label falls back to the bare date when the weekday is unknown", () => {
 	const out = buildReport([{ date: "not-a-date", day: null }], OPTS);
 	assert.ok(out.includes("### not-a-date\n\nNo planner this day.\n"));
+});
+
+test("scorecard: the actually rate never exceeds 100% and unplanned entries are counted apart", () => {
+	const d = emptyDay("2026-09-01");
+	d.blocks = {
+		"06:00": { text: "plan", created: "c", actual: "did it" },
+		"07:00": { text: "", created: "c", actual: "unplanned thing" },
+		"08:00": { text: "", created: "c", actual: "another unplanned" },
+	};
+	const out = buildReport([{ date: "2026-09-01", day: d }], { ...OPTS, end: "2026-09-01" });
+	assert.ok(out.includes("| Planned slots | 1 |"));
+	assert.ok(out.includes('| Slots with "actually" filled in | 1 (100%) |'));
+	assert.ok(out.includes('| Unplanned slots with an "actually" entry | 2 |'));
+	// and the report never emits a live Markdown checkbox
+	assert.ok(!/^- \[[ xX]\] /m.test(out));
 });

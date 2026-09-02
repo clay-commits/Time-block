@@ -25,7 +25,10 @@ export interface Big6Item {
 /** Where an adopted vault task came from: its note and the raw checkbox line. */
 export interface TaskSource {
 	path: string;
+	/** The raw checkbox line, the stable key used to re-find the task. */
 	line: string;
+	/** 0-based line index when adopted — a hint only; lines drift as notes are edited. */
+	lineNumber?: number;
 }
 
 export interface Task {

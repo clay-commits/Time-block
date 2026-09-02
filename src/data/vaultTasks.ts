@@ -342,3 +342,78 @@ export function daysBetween(from: string, to: string): number {
 	if (a === null || b === null) return 0;
 	return Math.round((b - a) / DAY_MS);
 }
+
+
+// ---------------------------------------------------------------------------
+// Locating a task line for completion
+// ---------------------------------------------------------------------------
+
+/** Does `line` look like `target` after it was completed by completeTaskLine? */
+export function isCompletedVariant(line: string, target: string): boolean {
+	const t = target.replace(/\r$/, "").replace(/\s+$/, "");
+	const l = line.replace(/\r$/, "").replace(/\s+$/, "");
+	const idx = t.indexOf("[ ]");
+	if (idx === -1) return false;
+	const head = t.slice(0, idx);
+	const tail = t.slice(idx + 3);
+	for (const mark of ["[x]", "[X]"]) {
+		const done = head + mark + tail;
+		if (l === done) return true;
+		if (l.startsWith(done + " ✅")) return true;
+	}
+	return false;
+}
+
+export interface LocatedLine {
+	index: number;
+	state: "open" | "completed";
+}
+
+/**
+ * Find the line to rewrite when completing a task. Lines inside fenced code
+ * blocks are never candidates (Obsidian does not index them as tasks). The
+ * hinted line wins when it still holds the task (open or already completed);
+ * otherwise the first open exact match, then the first completed variant.
+ */
+export function locateTaskLine(
+	lines: string[],
+	target: string,
+	hint?: number
+): LocatedLine | null {
+	const t = target.replace(/\r$/, "");
+	const same = (l: string) => l.replace(/\r$/, "") === t;
+
+	const fenced: boolean[] = [];
+	let marker: string | null = null;
+	for (let i = 0; i < lines.length; i++) {
+		const text = (lines[i] ?? "").replace(/\r$/, "");
+		if (marker === null) {
+			const open = /^ {0,3}(`{3,}|~{3,})/.exec(text);
+			if (open) {
+				marker = open[1]!;
+				fenced.push(true);
+				continue;
+			}
+			fenced.push(false);
+		} else {
+			fenced.push(true);
+			const close = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(text);
+			if (close && close[1]![0] === marker[0] && close[1]!.length >= marker.length) {
+				marker = null;
+			}
+		}
+	}
+
+	if (hint !== undefined && hint >= 0 && hint < lines.length && !fenced[hint]) {
+		const line = lines[hint]!;
+		if (same(line)) return { index: hint, state: "open" };
+		if (isCompletedVariant(line, t)) return { index: hint, state: "completed" };
+	}
+	for (let i = 0; i < lines.length; i++) {
+		if (!fenced[i] && same(lines[i]!)) return { index: i, state: "open" };
+	}
+	for (let i = 0; i < lines.length; i++) {
+		if (!fenced[i] && isCompletedVariant(lines[i]!, t)) return { index: i, state: "completed" };
+	}
+	return null;
+}

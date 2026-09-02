@@ -358,3 +358,21 @@ test("adopted vault tasks keep their source note and line", () => {
 	);
 	assert.equal(bad.tasks[0]!.source, undefined);
 });
+
+test("task source line hint round-trips and rejects garbage", () => {
+	const day = emptyDay("2026-09-02");
+	day.tasks.push({
+		id: "t1",
+		text: "x",
+		created: "c",
+		completed: null,
+		source: { path: "a.md", line: "- [ ] x", lineNumber: 7 },
+	});
+	const back = parseDay(serializeDay(day), "2026-09-02");
+	assert.equal(back.tasks[0]!.source!.lineNumber, 7);
+	const bad = parseDay(
+		["date: 2026-09-02", "tasks:", '  - {id: t2, text: y, created: c, source: {path: a.md, line: "- [ ] y", lineNumber: -3}}'].join("\n"),
+		"2026-09-02"
+	);
+	assert.equal(bad.tasks[0]!.source!.lineNumber, undefined);
+});

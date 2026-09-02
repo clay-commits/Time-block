@@ -1,4 +1,4 @@
-import { Task, TaskFilter, VaultTask } from "../data/types";
+import { Task, TaskFilter, TaskSource, VaultTask } from "../data/types";
 import { makeId } from "../data/ids";
 import {
 	addDays,
@@ -12,7 +12,7 @@ import type { PlannerCtx } from "./PlannerView";
 
 export interface VaultTaskServices {
 	scan(): Promise<VaultTask[]>;
-	complete(source: { path: string; line: string }): Promise<"done" | "already" | "missing">;
+	complete(source: TaskSource): Promise<"done" | "already" | "missing">;
 	open(task: VaultTask): Promise<void>;
 	saveSettings(): Promise<void>;
 	notice(message: string): void;
@@ -237,23 +237,32 @@ export class VaultTasksSection {
 		checkbox(row, false, `Done: ${task.text}`, (checked, input) => {
 			if (!checked) return;
 			input.disabled = true;
-			void ctx.services.complete({ path: task.path, line: task.raw }).then((result) => {
-				if (result === "missing") {
-					input.checked = false;
-					input.disabled = false;
-					ctx.services.notice(
-						"Couldn't find that line in its note anymore — open the note to check."
-					);
-					return;
-				}
-				// Record the completion in today's planner so it is trackable.
-				const adopted = this.adopt(task);
-				adopted.completed = ctx.now();
-				this.tasks = (this.tasks ?? []).filter((t) => t !== task);
-				ctx.changed();
-				ctx.refreshTasks();
-				this.renderList();
-			});
+			const revert = (message: string) => {
+				input.checked = false;
+				input.disabled = false;
+				ctx.services.notice(message);
+			};
+			void ctx.services
+				.complete({ path: task.path, line: task.raw, lineNumber: task.lineNumber })
+				.then(
+					(result) => {
+						if (result === "missing") {
+							revert("Couldn't find that line in its note anymore — open the note to check.");
+							return;
+						}
+						// Record the completion in today's planner so it is trackable.
+						const adopted = this.adopt(task);
+						adopted.completed = ctx.now();
+						this.tasks = (this.tasks ?? []).filter((t) => t !== task);
+						ctx.changed();
+						ctx.refreshTasks();
+						this.renderList();
+					},
+					(e) => {
+						console.error("Timeblock Daily: could not complete task in its note", e);
+						revert("Couldn't update the note — nothing was changed. See the console.");
+					}
+				);
 		});
 
 		const main = el(row, "div", "tb-vault-main");
@@ -306,7 +315,7 @@ export class VaultTasksSection {
 			text: task.text || "(empty task)",
 			created: this.ctx.now(),
 			completed: null,
-			source: { path: task.path, line: task.raw },
+			source: { path: task.path, line: task.raw, lineNumber: task.lineNumber },
 		};
 		this.ctx.day.tasks.push(adopted);
 		return adopted;

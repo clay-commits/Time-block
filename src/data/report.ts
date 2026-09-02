@@ -170,7 +170,10 @@ function compareText(a: string, b: string): number {
 /** Per-day counts for the scorecard and the plugin UI. */
 export function summarizeDay(day: DayData): {
 	planned: number;
+	/** Planned slots that also have an "actually" entry (never exceeds planned). */
 	actuallyFilled: number;
+	/** Slots with an "actually" entry but nothing planned. */
+	unplannedActual: number;
 	placedDone: number;
 	placedTotal: number;
 	big6Done: number;
@@ -178,15 +181,21 @@ export function summarizeDay(day: DayData): {
 } {
 	let planned = 0;
 	let actuallyFilled = 0;
+	let unplannedActual = 0;
 	for (const block of Object.values(day.blocks)) {
-		if (isPlanned(block)) planned++;
-		if (hasActual(block)) actuallyFilled++;
+		if (isPlanned(block)) {
+			planned++;
+			if (hasActual(block)) actuallyFilled++;
+		} else if (hasActual(block)) {
+			unplannedActual++;
+		}
 	}
 	const placed = realTasks(day).filter((t) => !!t.slot);
 	const big6 = realBig6(day);
 	return {
 		planned,
 		actuallyFilled,
+		unplannedActual,
 		placedDone: placed.filter(isDone).length,
 		placedTotal: placed.length,
 		big6Done: big6.filter(isDone).length,
@@ -285,6 +294,7 @@ function renderScorecard(days: ReportDay[], opts: ReportOptions, blocks: string[
 
 	let planned = 0;
 	let actuallyFilled = 0;
+	let unplannedActual = 0;
 	let placedDone = 0;
 	let placedTotal = 0;
 	let big6Done = 0;
@@ -296,6 +306,7 @@ function renderScorecard(days: ReportDay[], opts: ReportOptions, blocks: string[
 		const s = summarizeDay(rd.day);
 		planned += s.planned;
 		actuallyFilled += s.actuallyFilled;
+		unplannedActual += s.unplannedActual;
 		placedDone += s.placedDone;
 		placedTotal += s.placedTotal;
 		big6Done += s.big6Done;
@@ -325,6 +336,7 @@ function renderScorecard(days: ReportDay[], opts: ReportOptions, blocks: string[
 			[
 				["Planned slots", String(planned)],
 				['Slots with "actually" filled in', percentLabel(actuallyFilled, planned)],
+				['Unplanned slots with an "actually" entry', String(unplannedActual)],
 				["Placed tasks done", ofLabel(placedDone, placedTotal)],
 				["Big 6 done", ofLabel(big6Done, big6Total)],
 				["Tasks completed", String(completedInRange)],
@@ -418,9 +430,11 @@ function renderDay(rd: ReportDay, blocks: string[]): void {
 	const big6 = realBig6(day);
 	if (big6.length > 0) {
 		const items = big6.map((b) => {
-			if (!isDone(b)) return `[ ] ${b.text}`;
+			// Not Markdown checkboxes on purpose: a generated report must never
+			// create new open tasks for the vault inbox to find.
+			if (!isDone(b)) return `☐ ${b.text}`;
 			const at = timeOf(b.completed);
-			return at ? `[x] ${b.text} (done ${at})` : `[x] ${b.text}`;
+			return at ? `☑ ${b.text} (done ${at})` : `☑ ${b.text}`;
 		});
 		blocks.push(`**Big 6:**\n${bullets(items)}`);
 		wrote = true;
