@@ -5,6 +5,7 @@ import {
 	ReportOptions,
 	buildReport,
 	dateRange,
+	firstFreePath,
 	summarizeDay,
 	timeOf,
 	weekdayName,
@@ -757,4 +758,23 @@ test("scorecard: the actually rate never exceeds 100% and unplanned entries are 
 	assert.ok(out.includes('| Unplanned slots with an "actually" entry | 2 |'));
 	// and the report never emits a live Markdown checkbox
 	assert.ok(!/^- \[[ xX]\] /m.test(out));
+});
+
+// ---------------------------------------------------------------------------
+// firstFreePath — a report never overwrites an existing note
+// ---------------------------------------------------------------------------
+
+test("firstFreePath: plain name when free, else the first free numbered copy", () => {
+	const base = "Timeblock/Reviews/2026-09-01_to_2026-09-07";
+	const taken = (paths: string[]) => (p: string) => paths.includes(p);
+	assert.equal(firstFreePath(base, taken([])), `${base}.md`);
+	assert.equal(firstFreePath(base, taken([`${base}.md`])), `${base}-2.md`);
+	assert.equal(
+		firstFreePath(base, taken([`${base}.md`, `${base}-2.md`, `${base}-3.md`])),
+		`${base}-4.md`
+	);
+	// A gap is reused: -2 free while -3 is taken.
+	assert.equal(firstFreePath(base, taken([`${base}.md`, `${base}-3.md`])), `${base}-2.md`);
+	// Never returns a taken path, and gives up (null) instead of looping forever.
+	assert.equal(firstFreePath(base, () => true, 10), null);
 });

@@ -3,13 +3,14 @@ import type { TimeblockSettings } from "../settings";
 import { findFencedBlock } from "../data/block";
 import { parseDay } from "../data/serializer";
 import { localIsoTimestamp } from "../data/ids";
-import { ReportDay, buildReport, dateRange } from "../data/report";
+import { ReportDay, buildReport, dateRange, firstFreePath } from "../data/report";
 import { dailyNotePath, ensureFolderExists, getDailyConfig } from "./dailyNotes";
 
 /**
  * Read every daily planner in [start, end], build the review report, write it
- * to the reports folder (overwriting a previous report for the same range —
- * it is generated output), and return the note.
+ * to the reports folder as a NEW note, and return it. An existing note is
+ * never overwritten: a second report for the same range becomes
+ * "<start>_to_<end>-2.md", then "-3", and so on.
  */
 export async function buildReviewReport(
 	app: App,
@@ -53,12 +54,19 @@ export async function buildReviewReport(
 
 	const markdown = buildReport(days, { start, end, generatedAt: localIsoTimestamp() });
 	const folder = settings.reportsFolder.trim().replace(/^\/+|\/+$/g, "") || "Timeblock/Reviews";
-	const path = normalizePath(`${folder}/${start}_to_${end}.md`);
-	await ensureFolderExists(app, path);
-	const existing = app.vault.getAbstractFileByPath(path);
-	if (existing instanceof TFile) {
-		await app.vault.modify(existing, markdown);
-		return existing;
+	const base = normalizePath(`${folder}/${start}_to_${end}`);
+	await ensureFolderExists(app, `${base}.md`);
+	const exists = (p: string) => app.vault.getAbstractFileByPath(p) !== null;
+	// Only ever create; a name that turns out to be taken (created concurrently
+	// by sync or another device) is skipped for the next free one.
+	for (let attempt = 0; attempt < 5; attempt++) {
+		const path = firstFreePath(base, exists);
+		if (path === null) break;
+		try {
+			return await app.vault.create(path, markdown);
+		} catch (e) {
+			if (!exists(path)) throw e;
+		}
 	}
-	return app.vault.create(path, markdown);
+	throw new Error("Could not find a free name for the report note");
 }
