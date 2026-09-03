@@ -165,7 +165,7 @@ export default class TimeblockPlugin extends Plugin {
 				await this.app.workspace.getLeaf(false).openFile(file);
 			} catch (e) {
 				console.error("Timeblock Daily: report failed", e);
-				new Notice("Timeblock Daily: couldn't build the report — see the console.");
+				new Notice("Couldn't build the report — see the console.");
 			}
 		}).open();
 	}
@@ -201,7 +201,7 @@ export default class TimeblockPlugin extends Plugin {
 			await this.app.workspace.getLeaf(false).openFile(file);
 		} catch (e) {
 			console.error("Timeblock Daily: could not open today's planner", e);
-			new Notice("Timeblock Daily: could not open today's planner.");
+			new Notice("Could not open today's planner.");
 		}
 	}
 

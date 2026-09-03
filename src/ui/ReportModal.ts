@@ -22,8 +22,8 @@ export class ReportModal extends Modal {
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass("tb-report-modal");
-		contentEl.createEl("h2", { text: "Build review report" });
-		contentEl.createEl("div", {
+		this.titleEl.setText("Build review report");
+		contentEl.createDiv({
 			cls: "tb-report-hint",
 			text: "Pick the days to review. The report is written to your reports folder and opened.",
 		});
@@ -41,7 +41,7 @@ export class ReportModal extends Modal {
 			});
 		});
 
-		const error = contentEl.createEl("div", { cls: "tb-report-error" });
+		const error = contentEl.createDiv({ cls: "tb-report-error" });
 
 		new Setting(contentEl).addButton((btn) =>
 			btn
