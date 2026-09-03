@@ -171,6 +171,8 @@ export default class TimeblockPlugin extends Plugin {
 			scan: () => this.scanner.scan(this.settings),
 			complete: (source) => completeInSource(this.app, source),
 			open: (task) => openVaultTask(this.app, task),
+			openLink: (target, sourcePath) =>
+				this.app.workspace.openLinkText(target, sourcePath),
 			saveSettings: () => this.saveSettings(),
 			notice: (message) => {
 				new Notice(message);

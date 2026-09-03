@@ -772,3 +772,153 @@ test("isCompletedVariant matches [x]/[X] with or without a stamp, not other text
 	assert.ok(!isCompletedVariant("- [ ] a", "- [ ] a"));
 	assert.ok(!isCompletedVariant("- [/] a", "- [ ] a"));
 });
+
+// ---------------------------------------------------------------------------
+// splitTaskLinks — link syntax in task titles (1.1.1)
+// ---------------------------------------------------------------------------
+
+import { ScanMemo, TaskTextSegment, splitTaskLinks } from "../src/data/vaultTasks";
+
+const txt = (text: string): TaskTextSegment => ({ kind: "text", text });
+const ext = (label: string, target: string): TaskTextSegment => ({
+	kind: "link",
+	label,
+	target,
+	external: true,
+});
+const note = (label: string, target: string): TaskTextSegment => ({
+	kind: "link",
+	label,
+	target,
+	external: false,
+});
+const wiki = (label: string, target: string): TaskTextSegment => ({ kind: "wikilink", label, target });
+
+test("splitTaskLinks: plain text is one segment; empty text is none", () => {
+	assert.deepEqual(splitTaskLinks("Pay the water bill"), [txt("Pay the water bill")]);
+	assert.deepEqual(splitTaskLinks(""), []);
+});
+
+test("splitTaskLinks: markdown link with a URL becomes an external link segment", () => {
+	assert.deepEqual(splitTaskLinks("Pay [Water](https://water.phila.gov/) bill"), [
+		txt("Pay "),
+		ext("Water", "https://water.phila.gov/"),
+		txt(" bill"),
+	]);
+	assert.deepEqual(splitTaskLinks("[Mail](mailto:a@b.c)"), [ext("Mail", "mailto:a@b.c")]);
+});
+
+test("splitTaskLinks: markdown link to a note path is an internal link", () => {
+	assert.deepEqual(splitTaskLinks("see [the plan](Notes/Plan.md)"), [
+		txt("see "),
+		note("the plan", "Notes/Plan.md"),
+	]);
+});
+
+test("splitTaskLinks: wikilinks with and without alias, headings kept in the target", () => {
+	assert.deepEqual(splitTaskLinks("[[Project X]]"), [wiki("Project X", "Project X")]);
+	assert.deepEqual(splitTaskLinks("read [[Notes/Plan|the plan]] today"), [
+		txt("read "),
+		wiki("the plan", "Notes/Plan"),
+		txt(" today"),
+	]);
+	assert.deepEqual(splitTaskLinks("[[Plan#Week 2|wk2]]"), [wiki("wk2", "Plan#Week 2")]);
+	assert.deepEqual(splitTaskLinks("[[ Plan | ]]"), [wiki("Plan", "Plan")], "empty alias falls back");
+});
+
+test("splitTaskLinks: embeds drop the leading ! and render as links", () => {
+	assert.deepEqual(splitTaskLinks("![[img.png]]"), [wiki("img.png", "img.png")]);
+	assert.deepEqual(splitTaskLinks("![alt](https://x.test/y.png)"), [ext("alt", "https://x.test/y.png")]);
+});
+
+test("splitTaskLinks: unbalanced or empty brackets stay plain text, unchanged", () => {
+	for (const raw of [
+		"[Water](https://x",
+		"[Water]",
+		"[Water] (https://x)",
+		"[[open",
+		"[]()",
+		"[[]]",
+		"[x]( )",
+		"a ] b [ c",
+		"[[a]b]]",
+		"![",
+		"!",
+	]) {
+		assert.deepEqual(splitTaskLinks(raw), [txt(raw)], JSON.stringify(raw));
+	}
+});
+
+test("splitTaskLinks: adjacent links, balanced brackets in labels, parentheses in URLs", () => {
+	assert.deepEqual(splitTaskLinks("[a](http://a)[b](http://b)"), [ext("a", "http://a"), ext("b", "http://b")]);
+	assert.deepEqual(splitTaskLinks("[a [b] c](http://x)"), [ext("a [b] c", "http://x")]);
+	assert.deepEqual(splitTaskLinks("[wp](https://en.wikipedia.org/wiki/Foo_(bar))"), [
+		ext("wp", "https://en.wikipedia.org/wiki/Foo_(bar)"),
+	]);
+});
+
+test("splitTaskLinks: quoted titles and angle brackets around the target", () => {
+	assert.deepEqual(splitTaskLinks('[a](http://a "A site")'), [ext("a", "http://a")]);
+	assert.deepEqual(splitTaskLinks("[a](<http://a>)"), [ext("a", "http://a")]);
+	assert.deepEqual(splitTaskLinks("[a](http://a b)"), [txt("[a](http://a b)")], "unquoted second word is not a link");
+	assert.deepEqual(splitTaskLinks("[](http://a)"), [ext("http://a", "http://a")], "empty label shows the target");
+});
+
+test("splitTaskLinks: tags and dates around links survive as text", () => {
+	assert.deepEqual(splitTaskLinks("#home [Water](https://w.test) 📅 2026-09-05"), [
+		txt("#home "),
+		ext("Water", "https://w.test"),
+		txt(" 📅 2026-09-05"),
+	]);
+});
+
+// ---------------------------------------------------------------------------
+// ScanMemo — the vault scan is reused until something changes (1.1.1)
+// ---------------------------------------------------------------------------
+
+test("ScanMemo: reuses the last result until invalidated or the key changes", async () => {
+	let runs = 0;
+	const memo = new ScanMemo<number>();
+	const run = async () => ++runs;
+	assert.equal(await memo.get("k", run), 1);
+	assert.equal(await memo.get("k", run), 1, "second call is served from memory");
+	assert.equal(runs, 1);
+	memo.invalidate();
+	assert.equal(await memo.get("k", run), 2, "invalidate forces a fresh run");
+	assert.equal(await memo.get("other", run), 3, "a different key re-runs");
+	assert.equal(await memo.get("other", run), 3);
+	assert.equal(runs, 3);
+});
+
+test("ScanMemo: callers during a run share it; an invalidate mid-run makes the next call run again", async () => {
+	let release!: () => void;
+	const gate = new Promise<void>((r) => (release = r));
+	let runs = 0;
+	const memo = new ScanMemo<number>();
+	const run = async () => {
+		runs++;
+		await gate;
+		return runs;
+	};
+	const a = memo.get("k", run);
+	const b = memo.get("k", run);
+	assert.equal(runs, 1, "second caller joined the in-flight run");
+	memo.invalidate();
+	release();
+	assert.equal(await a, 1);
+	assert.equal(await b, 1);
+	assert.equal(await memo.get("k", run), 2, "invalidated while running → runs again");
+});
+
+test("ScanMemo: a failed run is not remembered", async () => {
+	const memo = new ScanMemo<number>();
+	let n = 0;
+	await assert.rejects(
+		memo.get("k", async () => {
+			n++;
+			throw new Error("boom");
+		})
+	);
+	assert.equal(await memo.get("k", async () => ++n), 2);
+	assert.equal(await memo.get("k", async () => ++n), 2, "the good result is kept");
+});
