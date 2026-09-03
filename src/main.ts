@@ -40,6 +40,16 @@ import {
 
 const FOREIGN_BLOCK_MSG =
 	"Timeblock Daily manages only the first timeblock block in a note. This block is a duplicate (or its content no longer matches the managed block), so it is shown read-only to protect your data. Remove the extra block, or move its content into the first one.";
+const UNCLOSED_BLOCK_MSG =
+	"This block has no closing ``` fence, so everything after it would count as planner data. It is shown read-only to protect your note. Put a closing ``` on its own line after the YAML and it will render again.";
+const PLANNER_DIVERGED_MSG =
+	"This planner changed on disk (sync or another editor). Your last edits were not saved — the note now shows the newer version.";
+const PLANNER_REMOVED_MSG =
+	"The planner block was removed from this note. Your last edits were not saved.";
+const LISTS_DIVERGED_MSG =
+	"Your lists changed on disk (sync or another editor). Your last edits were not saved — the note now shows the newer version.";
+const LISTS_REMOVED_MSG =
+	"The lists block was removed from its note. Your last edits were not saved.";
 
 export default class TimeblockPlugin extends Plugin {
 	settings: TimeblockSettings = { ...DEFAULT_SETTINGS };
@@ -77,7 +87,9 @@ export default class TimeblockPlugin extends Plugin {
 		this.refreshRibbon();
 		this.addSettingTab(new TimeblockSettingTab(this.app, this));
 
-		// Never write on keystroke; do write the moment attention moves away.
+		// Never write on keystroke; do write the moment attention moves away —
+		// and before a phone freezes our timers in the background, or the app
+		// quits (the quit hook makes Obsidian wait for the write to finish).
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", () => {
 				void this.flushAll();
@@ -86,6 +98,17 @@ export default class TimeblockPlugin extends Plugin {
 		this.registerDomEvent(window, "blur", () => {
 			void this.flushAll();
 		});
+		this.registerDomEvent(document, "visibilitychange", () => {
+			if (document.visibilityState === "hidden") void this.flushAll();
+		});
+		this.registerDomEvent(window, "pagehide", () => {
+			void this.flushAll();
+		});
+		this.registerEvent(
+			this.app.workspace.on("quit", (tasks) => {
+				tasks.add(() => this.flushAll());
+			})
+		);
 
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => this.scanner.invalidate(file.path))
@@ -253,15 +276,23 @@ export default class TimeblockPlugin extends Plugin {
 	): Promise<void> {
 		const path = ctx.sourcePath;
 		let diskInner: string | null = null;
+		let unclosed = false;
 		const file = this.app.vault.getAbstractFileByPath(path);
 		if (file instanceof TFile) {
 			try {
 				const content = await this.app.vault.cachedRead(file);
 				const found = findFencedBlock(content, "timeblock");
-				if (found) diskInner = found.inner;
+				if (found && !found.closed) unclosed = true;
+				else if (found) diskInner = found.inner;
 			} catch (e) {
 				console.error("Timeblock Daily: could not read note", e);
 			}
+		}
+		// An unclosed fence runs to the end of the note: binding a writer to it
+		// would let a save swallow whatever follows. Read-only, always.
+		if (unclosed) {
+			renderErrorCard(container, "This planner block is read-only", UNCLOSED_BLOCK_MSG);
+			return;
 		}
 		if (diskInner == null || !sameInner(source, diskInner)) {
 			renderErrorCard(container, "This planner block is read-only", FOREIGN_BLOCK_MSG);
@@ -288,6 +319,16 @@ export default class TimeblockPlugin extends Plugin {
 			session = this.createDaySession(path, day, diskInner);
 			this.daySessions.set(path, session);
 		} else {
+			const last = session.writer.getLastWritten();
+			if (last != null && sameInner(diskInner, last)) {
+				// Our own write landed while we were reading the file: an echo,
+				// not an outside change — keep the live model and its pending edits.
+				this.mountDay(container, ctx, session);
+				return;
+			}
+			// The block changed outside this plugin. Edits still waiting to be
+			// written cannot be merged with it; say so rather than lose them silently.
+			if (session.writer.hasPending) new Notice(PLANNER_DIVERGED_MSG);
 			session.writer.dropPending();
 			session.writer.primeLastWritten(diskInner);
 			session.day = day;
@@ -331,7 +372,10 @@ export default class TimeblockPlugin extends Plugin {
 				return f instanceof TFile ? f : null;
 			},
 			"timeblock",
-			() => {
+			(disk) => {
+				// The writer found the block changed (or gone) and dropped the
+				// edit it was about to save — the user must hear about that.
+				new Notice(disk === null ? PLANNER_REMOVED_MSG : PLANNER_DIVERGED_MSG);
 				void this.rehydrateDaySession(session);
 			}
 		);
@@ -346,7 +390,9 @@ export default class TimeblockPlugin extends Plugin {
 		try {
 			const content = await this.app.vault.read(file);
 			const found = findFencedBlock(content, "timeblock");
-			if (!found) return; // block deleted — views vanish on next render
+			// Block deleted, or its closing fence gone: nothing safe to bind to —
+			// the next render shows nothing / the read-only card instead.
+			if (!found || !found.closed) return;
 			const fallbackDate =
 				dateForDailyPath(this.app, this.settings, session.path) ??
 				session.day.date;
@@ -385,15 +431,21 @@ export default class TimeblockPlugin extends Plugin {
 	): Promise<void> {
 		const path = ctx.sourcePath;
 		let diskInner: string | null = null;
+		let unclosed = false;
 		const file = this.app.vault.getAbstractFileByPath(path);
 		if (file instanceof TFile) {
 			try {
 				const content = await this.app.vault.cachedRead(file);
 				const found = findFencedBlock(content, "timeblock-lists");
-				if (found) diskInner = found.inner;
+				if (found && !found.closed) unclosed = true;
+				else if (found) diskInner = found.inner;
 			} catch (e) {
 				console.error("Timeblock Daily: could not read lists note", e);
 			}
+		}
+		if (unclosed) {
+			renderErrorCard(container, "This lists block is read-only", UNCLOSED_BLOCK_MSG);
+			return;
 		}
 		if (diskInner == null || !sameInner(source, diskInner)) {
 			renderErrorCard(container, "This lists block is read-only", FOREIGN_BLOCK_MSG);
@@ -417,6 +469,13 @@ export default class TimeblockPlugin extends Plugin {
 			session = this.createListsSession(path, data, diskInner);
 			this.listsSessions.set(path, session);
 		} else {
+			const last = session.writer.getLastWritten();
+			if (last != null && sameInner(diskInner, last)) {
+				// Echo of our own write: keep the live model and its pending edits.
+				ctx.addChild(new ListsFileView(container, session));
+				return;
+			}
+			if (session.writer.hasPending) new Notice(LISTS_DIVERGED_MSG);
 			session.writer.dropPending();
 			session.writer.primeLastWritten(diskInner);
 			session.data = data;
@@ -443,7 +502,8 @@ export default class TimeblockPlugin extends Plugin {
 				return f instanceof TFile ? f : null;
 			},
 			"timeblock-lists",
-			() => {
+			(disk) => {
+				new Notice(disk === null ? LISTS_REMOVED_MSG : LISTS_DIVERGED_MSG);
 				void this.rehydrateListsSession(session);
 			}
 		);
@@ -457,7 +517,7 @@ export default class TimeblockPlugin extends Plugin {
 		try {
 			const content = await this.app.vault.read(file);
 			const found = findFencedBlock(content, "timeblock-lists");
-			if (!found) return;
+			if (!found || !found.closed) return;
 			try {
 				session.data = parseLists(found.inner);
 			} catch {

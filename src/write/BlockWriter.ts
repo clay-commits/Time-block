@@ -9,9 +9,11 @@ export interface Scheduler {
 	clear(handle: unknown): void;
 }
 
+// `window` is looked up lazily, inside the arrow functions, so this module
+// still loads headless (tests inject their own scheduler and never call these).
 const defaultScheduler: Scheduler = {
-	set: (fn, delayMs) => setTimeout(fn, delayMs),
-	clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+	set: (fn, delayMs) => window.setTimeout(fn, delayMs),
+	clear: (handle) => window.clearTimeout(handle as number),
 };
 
 /** Trailing-edge debouncer with an awaitable flush. Pure; scheduler injectable. */
@@ -73,6 +75,14 @@ export const WRITE_DEBOUNCE_MS = 800;
 export class BlockWriter {
 	private pendingInner: string | null = null;
 	private lastWritten: string | null = null;
+	/**
+	 * Bumped whenever the owner re-hydrates from disk (dropPending /
+	 * primeLastWritten). A write that was already in flight then belongs to
+	 * an older picture of the file: it must not land, must not be recorded as
+	 * lastWritten, and must not be retried — otherwise a stale payload could
+	 * overwrite the newer content the owner just loaded.
+	 */
+	private epoch = 0;
 	private readonly debouncer: Debouncer;
 	private writeChain: Promise<void> = Promise.resolve();
 
@@ -90,6 +100,7 @@ export class BlockWriter {
 	/** Record what the block looked like when we hydrated from disk. */
 	primeLastWritten(inner: string): void {
 		this.lastWritten = inner;
+		this.epoch++;
 	}
 
 	getLastWritten(): string | null {
@@ -108,6 +119,7 @@ export class BlockWriter {
 	dropPending(): void {
 		this.pendingInner = null;
 		this.debouncer.cancel();
+		this.epoch++;
 	}
 
 	async flush(): Promise<void> {
@@ -127,6 +139,8 @@ export class BlockWriter {
 		this.pendingInner = null;
 		const file = this.getFile();
 		if (!file) return;
+		const epoch = this.epoch;
+		const superseded = () => this.epoch !== epoch;
 
 		let diverged: { disk: string | null } | null = null;
 		// lastWritten must only be committed AFTER vault.process resolves: a
@@ -135,6 +149,9 @@ export class BlockWriter {
 		let commitLastWritten: string | null = null;
 		try {
 			await this.vault.process(file, (content) => {
+				// The owner re-hydrated while we waited for the file: this
+				// payload describes an older state — leave the note alone.
+				if (superseded()) return content;
 				const found = findFencedBlock(content, this.lang);
 				if (!found) {
 					// Block was deleted out from under us — never resurrect it.
@@ -152,8 +169,10 @@ export class BlockWriter {
 				commitLastWritten = inner;
 				return replaceFencedBlock(content, found, inner);
 			});
-			if (commitLastWritten != null) this.lastWritten = commitLastWritten;
+			if (commitLastWritten != null && !superseded()) this.lastWritten = commitLastWritten;
 		} catch (e) {
+			// Superseded meanwhile: the owner holds newer content; nothing to retry.
+			if (superseded()) return;
 			// Disk write failed (file gone, IO error): keep the payload pending and
 			// re-arm the debounce so it retries instead of silently losing the edit.
 			if (this.pendingInner == null) {
@@ -163,7 +182,7 @@ export class BlockWriter {
 			console.error("Timeblock Daily: failed to write block", e);
 			return;
 		}
-		if (diverged) {
+		if (diverged && !superseded()) {
 			this.dropPending();
 			this.onDiverged((diverged as { disk: string | null }).disk);
 		}
