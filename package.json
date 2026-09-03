@@ -1,7 +1,7 @@
 {
 	"name": "timeblock-daily",
-	"version": "1.1.0",
-	"description": "Obsidian plugin: a daily planning page inside your daily note — goals, Big 6, task inbox with rollover, persistent lists, and a 15-minute time grid.",
+	"version": "1.1.1",
+	"description": "Turns your daily note into a daily planning page with top 3 goals, the Big 6, a task inbox that rolls over, persistent lists, and a 15-minute time grid.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
