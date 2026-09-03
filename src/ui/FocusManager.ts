@@ -13,14 +13,16 @@ export interface FocusSnapshot {
 type Editable = HTMLInputElement | HTMLTextAreaElement;
 type Focusable = Editable | HTMLSelectElement;
 
+// Checked by tag name, not by the main window's HTMLInputElement & co.: an
+// element in a pop-out window is built from THAT window's constructors, so a
+// check against the main window's globals would wrongly fail there.
 function isEditable(node: Element | null): node is Editable {
-	return (
-		node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
-	);
+	const tag = node?.tagName;
+	return tag === "INPUT" || tag === "TEXTAREA";
 }
 
 function isFocusable(node: Element | null): node is Focusable {
-	return isEditable(node) || node instanceof HTMLSelectElement;
+	return isEditable(node) || node?.tagName === "SELECT";
 }
 
 export class FocusManager {
@@ -48,8 +50,7 @@ export class FocusManager {
 			selEnd = this.snapshot.selEnd;
 		}
 		const grid = root.querySelector(".tb-grid-scroll");
-		const gridScroll =
-			grid instanceof HTMLElement ? grid.scrollTop : this.snapshot?.gridScroll ?? 0;
+		const gridScroll = grid ? grid.scrollTop : this.snapshot?.gridScroll ?? 0;
 		this.snapshot = { tbId, selStart, selEnd, gridScroll };
 	}
 
@@ -62,7 +63,7 @@ export class FocusManager {
 		const s = this.snapshot;
 		if (!s) return;
 		const grid = root.querySelector(".tb-grid-scroll");
-		if (grid instanceof HTMLElement) grid.scrollTop = s.gridScroll;
+		if (grid) grid.scrollTop = s.gridScroll;
 		if (!s.tbId) return;
 		const doc = root.ownerDocument;
 		const active = doc.activeElement;

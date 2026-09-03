@@ -2,6 +2,7 @@ import { App, TFile } from "obsidian";
 import type { TimeblockSettings } from "../settings";
 import { TaskSource, VaultTask } from "../data/types";
 import {
+	ScanMemo,
 	completeTaskLine,
 	folderRulesAllow,
 	locateTaskLine,
@@ -29,24 +30,47 @@ export function completionStamp(d: Date = new Date()): string {
 /**
  * Finds open "- [ ]" lines across the vault using Obsidian's metadata cache
  * (so only notes that actually contain task items are read), with a per-file
- * cache keyed on mtime+size so unchanged notes are never re-read.
+ * cache keyed on mtime+size so unchanged notes are never re-read, and a
+ * whole-vault memo so the planner's frequent re-renders (one after each of
+ * its own saves) reuse the last result instead of walking the vault again.
  */
 export class VaultTaskScanner {
 	private readonly cache = new Map<string, CacheEntry>();
+	/** Last whole-vault result; callers treat the array as read-only. */
+	private readonly memo = new ScanMemo<VaultTask[]>();
 
 	constructor(private readonly app: App) {}
 
 	invalidate(path: string): void {
+		const had = this.cache.get(path);
 		this.cache.delete(path);
+		// Only a note that contributed tasks, or holds open items now, can
+		// change the result — a daily note's own save (YAML inside a fence,
+		// which the metadata cache never lists as tasks) leaves the memo alone.
+		if ((had && had.tasks.length > 0) || this.mayHoldOpenItems(path)) {
+			this.memo.invalidate();
+		}
 	}
 
-	async scan(settings: TimeblockSettings): Promise<VaultTask[]> {
-		const out: VaultTask[] = [];
+	private mayHoldOpenItems(path: string): boolean {
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) return true; // deleted or renamed: be safe
+		const meta = this.app.metadataCache.getFileCache(file);
+		return (meta?.listItems ?? []).some((li) => li.task === " ");
+	}
+
+	scan(settings: TimeblockSettings): Promise<VaultTask[]> {
 		// Generated review reports are never a source of tasks.
 		const excludes = [...settings.vaultTaskExcludeFolders, settings.reportsFolder];
+		const includes = settings.vaultTaskIncludeFolders;
+		const key = JSON.stringify([includes, excludes]);
+		return this.memo.get(key, () => this.scanNow(includes, excludes));
+	}
+
+	private async scanNow(includes: string[], excludes: string[]): Promise<VaultTask[]> {
+		const out: VaultTask[] = [];
 		for (const file of this.app.vault.getMarkdownFiles()) {
-			if (!folderRulesAllow(file.path, settings.vaultTaskIncludeFolders, excludes))
-				continue;
+			if (!folderRulesAllow(file.path, includes, excludes)) continue;
 			const meta = this.app.metadataCache.getFileCache(file);
 			const openItems = (meta?.listItems ?? []).filter((li) => li.task === " ");
 			if (openItems.length === 0) continue;

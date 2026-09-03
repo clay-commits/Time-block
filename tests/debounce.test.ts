@@ -269,3 +269,83 @@ test("CRLF disk content does not trigger false divergence", async () => {
 	assert.equal(diverged, false);
 	assert.equal(findFencedBlock(vault.content, "timeblock")!.inner, "a: 2\n");
 });
+
+// ---------------------------------------------------------------------------
+// 1.1.1 — a write already in flight when the owner re-hydrates is abandoned
+// ---------------------------------------------------------------------------
+
+/** vault.process that waits on a gate before its "read", like a real file read. */
+class GatedVault {
+	writes = 0;
+	fail = false;
+	constructor(public content: string, private readonly gate: Promise<void>) {}
+	async process(_f: TFile, fn: (d: string) => string): Promise<string> {
+		await this.gate;
+		if (this.fail) throw new Error("disk error");
+		const next = fn(this.content);
+		if (next !== this.content) this.writes++;
+		this.content = next;
+		return next;
+	}
+}
+
+test("in-flight write is abandoned when the owner re-hydrates: it neither lands, nor becomes lastWritten, nor retries", async () => {
+	const sched = new FakeScheduler();
+	let release!: () => void;
+	const vault = new GatedVault("```timeblock\na: 1\n```\n", new Promise<void>((r) => (release = r)));
+	let diverged = false;
+	const writer = new BlockWriter(
+		vault as unknown as FakeVault,
+		() => FILE,
+		"timeblock",
+		() => (diverged = true),
+		800,
+		sched
+	);
+	writer.primeLastWritten("a: 1\n");
+	writer.queue("a: 2\n");
+	sched.advance(800); // the write starts and blocks in its file read
+	// Meanwhile sync rewrote the block and the owner re-hydrated from disk.
+	vault.content = "```timeblock\nsynced: true\n```\n";
+	writer.dropPending();
+	writer.primeLastWritten("synced: true\n");
+	release();
+	await writer.flush();
+	assert.equal(vault.content, "```timeblock\nsynced: true\n```\n", "stale payload must not land");
+	assert.equal(vault.writes, 0);
+	assert.equal(writer.getLastWritten(), "synced: true\n", "lastWritten stays what the owner primed");
+	assert.equal(writer.hasPending, false, "nothing queued for retry");
+	assert.equal(sched.armed, 0);
+	assert.equal(diverged, false, "the owner already re-hydrated; no second divergence");
+});
+
+test("a write that fails after the owner re-hydrated is not retried", async () => {
+	const sched = new FakeScheduler();
+	let release!: () => void;
+	const vault = new GatedVault("```timeblock\na: 1\n```\n", new Promise<void>((r) => (release = r)));
+	vault.fail = true;
+	const writer = new BlockWriter(vault as unknown as FakeVault, () => FILE, "timeblock", () => {}, 800, sched);
+	writer.primeLastWritten("a: 1\n");
+	writer.queue("a: 2\n");
+	sched.advance(800);
+	writer.dropPending();
+	writer.primeLastWritten("a: 1\n");
+	release();
+	await writer.flush();
+	assert.equal(writer.hasPending, false);
+	assert.equal(sched.armed, 0, "no retry armed for a superseded payload");
+});
+
+test("without a re-hydrate, an in-flight write lands and is recorded as usual", async () => {
+	const sched = new FakeScheduler();
+	let release!: () => void;
+	const vault = new GatedVault("```timeblock\na: 1\n```\n", new Promise<void>((r) => (release = r)));
+	const writer = new BlockWriter(vault as unknown as FakeVault, () => FILE, "timeblock", () => {}, 800, sched);
+	writer.primeLastWritten("a: 1\n");
+	writer.queue("a: 2\n");
+	sched.advance(800);
+	release();
+	await writer.flush();
+	assert.equal(findFencedBlock(vault.content, "timeblock")!.inner, "a: 2\n");
+	assert.equal(writer.getLastWritten(), "a: 2\n");
+});

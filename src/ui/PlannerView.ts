@@ -81,6 +81,7 @@ export class PlannerView extends MarkdownRenderChild {
 	private unloaded = false;
 	private resizeObserver: ResizeObserver | null = null;
 	private tasksSection: TasksSection | null = null;
+	private vaultSection: VaultTasksSection | null = null;
 	private timeGrid: TimeGrid | null = null;
 	private readonly rebuildListener = () => this.rebuild();
 
@@ -141,6 +142,7 @@ export class PlannerView extends MarkdownRenderChild {
 		this.root = null;
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
+		this.disposeSections();
 		void this.deps.session.writer.flush();
 	}
 
@@ -148,9 +150,16 @@ export class PlannerView extends MarkdownRenderChild {
 		if (!this.root) return;
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
+		this.disposeSections();
 		this.containerEl.removeChild(this.root);
 		this.root = null;
 		this.build();
+	}
+
+	/** Sections that hold timers give them up when their DOM goes away. */
+	private disposeSections(): void {
+		this.vaultSection?.dispose();
+		this.vaultSection = null;
 	}
 
 	private build(): void {
@@ -188,11 +197,12 @@ export class PlannerView extends MarkdownRenderChild {
 		this.tasksSection = new TasksSection(tasksC, ctx);
 		this.tasksSection.render();
 		if (settings.showVaultTasks) {
-			new VaultTasksSection(vaultC, {
+			this.vaultSection = new VaultTasksSection(vaultC, {
 				...ctx,
 				services: this.deps.vaultTasks,
 				today: () => moment().format("YYYY-MM-DD"),
-			}).render();
+			});
+			this.vaultSection.render();
 		}
 		this.mountLists(listsC);
 		this.mountNotes(notesC, ctx);

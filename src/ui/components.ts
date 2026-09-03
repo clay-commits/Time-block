@@ -1,16 +1,20 @@
 import { setIcon } from "obsidian";
 
+/**
+ * Create a child element through Obsidian's createEl so it belongs to the
+ * parent's own document (pop-out windows included). Callers keep the short
+ * (parent, tag, cls, text) signature.
+ */
 export function el<K extends keyof HTMLElementTagNameMap>(
 	parent: HTMLElement,
 	tag: K,
 	cls?: string,
 	text?: string
 ): HTMLElementTagNameMap[K] {
-	const node = parent.ownerDocument.createElement(tag);
-	if (cls) node.className = cls;
-	if (text !== undefined) node.textContent = text;
-	parent.appendChild(node);
-	return node;
+	const info: DomElementInfo = {};
+	if (cls) info.cls = cls;
+	if (text !== undefined) info.text = text;
+	return parent.createEl(tag, info);
 }
 
 export function section(
@@ -70,8 +74,9 @@ export function textarea(parent: HTMLElement, opts: TextareaOpts): HTMLTextAreaE
 	area.setAttribute("data-tb-id", opts.tbId);
 	area.rows = 3;
 	const grow = () => {
-		area.style.height = "auto";
-		area.style.height = `${area.scrollHeight}px`;
+		// Reset first so scrollHeight reflects the content, not the old height.
+		area.setCssStyles({ height: "auto" });
+		area.setCssStyles({ height: `${area.scrollHeight}px` });
 	};
 	area.addEventListener("input", () => {
 		grow();

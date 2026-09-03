@@ -24,7 +24,7 @@ export class TimeGrid {
 		while (this.container.firstChild) this.container.removeChild(this.container.firstChild);
 		const ctx = this.ctx;
 		const root = el(this.container, "div", "tb-section tb-grid");
-		el(root, "div", "tb-section-title", `The day, in ${ctx.settings.slotMinutes}s`);
+		el(root, "div", "tb-section-title", `The day in ${ctx.settings.slotMinutes}-minute slots`);
 		const scroll = el(root, "div", "tb-grid-scroll");
 		if (ctx.armedTaskId()) root.classList.add("tb-arming");
 
@@ -101,7 +101,7 @@ export class TimeGrid {
 		const actual = el(content, "input", "tb-text tb-slot-actual");
 		actual.type = "text";
 		actual.value = block?.actual ?? "";
-		actual.placeholder = "actually…";
+		actual.placeholder = "Actually…";
 		actual.setAttribute("data-tb-id", `actual-${slot}`);
 		actual.setAttribute("aria-label", `What actually happened at ${slot}`);
 		actual.setAttribute("spellcheck", "false");

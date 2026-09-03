@@ -23,11 +23,11 @@ const TASK_LINE_RE = /^(\s*)([-*+]|\d+[.)])(\s+)\[(.)\](\s+)(.*)$/u;
 /** "📅 2026-09-05" (an optional U+FE0F variation selector is tolerated). */
 const DUE_EMOJI_RE = /📅\uFE0F?\s*(\d{4}-\d{2}-\d{2})(?!\d)/u;
 /** "[due:: 2026-09-05]" or "(due:: 2026-09-05)". */
-const DUE_FIELD_RE = /[\[(]due::\s*(\d{4}-\d{2}-\d{2})(?!\d)/iu;
+const DUE_FIELD_RE = /[[(]due::\s*(\d{4}-\d{2}-\d{2})(?!\d)/iu;
 /** "➕ 2026-08-30". */
 const CREATED_EMOJI_RE = /➕\uFE0F?\s*(\d{4}-\d{2}-\d{2})(?!\d)/u;
 /** "[created:: 2026-08-30]" or "(created:: 2026-08-30)". */
-const CREATED_FIELD_RE = /[\[(]created::\s*(\d{4}-\d{2}-\d{2})(?!\d)/iu;
+const CREATED_FIELD_RE = /[[(]created::\s*(\d{4}-\d{2}-\d{2})(?!\d)/iu;
 
 /** Every Tasks-plugin date marker except ✅, followed by its date. */
 const EMOJI_DATE_RE = /(?:📅|➕|⏳|🛫|❌)\uFE0F?\s*\d{4}-\d{2}-\d{2}(?!\d)/gu;
@@ -38,7 +38,7 @@ const FIELD_STRIP_RE =
 	/\[(?:due|created|completion|start|scheduled)::[^\]]*\]|\((?:due|created|completion|start|scheduled)::[^)]*\)/giu;
 
 /** "#tag" tokens: start with a letter or "_", then letters/digits/"_"/"-"/"/". */
-const TAG_RE = /(^|\s)#([A-Za-z_][\w\/-]*)/g;
+const TAG_RE = /(^|\s)#([A-Za-z_][\w/-]*)/g;
 
 const DAY_MS = 86400000;
 
@@ -416,4 +416,184 @@ export function locateTaskLine(
 		if (!fenced[i] && isCompletedVariant(lines[i]!, t)) return { index: i, state: "completed" };
 	}
 	return null;
+}
+
+// ---------------------------------------------------------------------------
+// Link syntax inside a task's text
+// ---------------------------------------------------------------------------
+
+export type TaskTextSegment =
+	| { kind: "text"; text: string }
+	/** "[label](target)": external when the target has a URL scheme, else a note path. */
+	| { kind: "link"; label: string; target: string; external: boolean }
+	/** "[[target|label]]" or "[[target]]" — always a note in the vault. */
+	| { kind: "wikilink"; label: string; target: string };
+
+const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+
+/**
+ * Split a task's text into plain text and link segments, so the inbox can
+ * show "[Water](https://…)" as a link labelled "Water" rather than raw
+ * markdown. Understands markdown links "[label](target)" (optional quoted
+ * title, optional <angle brackets>) and wikilinks "[[note|alias]]"; a leading
+ * "!" (embed) is dropped. Unbalanced or empty brackets stay plain text. Plain
+ * character scanning — no regex lookbehind, which mobile WebViews lack.
+ * Never mutates its input; "" yields [].
+ */
+export function splitTaskLinks(text: string): TaskTextSegment[] {
+	const out: TaskTextSegment[] = [];
+	let plain = "";
+	const flush = () => {
+		if (plain !== "") {
+			out.push({ kind: "text", text: plain });
+			plain = "";
+		}
+	};
+	let i = 0;
+	while (i < text.length) {
+		const ch = text[i]!;
+		const at = ch === "!" && text[i + 1] === "[" ? i + 1 : i;
+		if (text[at] === "[") {
+			const link = text.startsWith("[[", at)
+				? parseWikilink(text, at)
+				: parseMarkdownLink(text, at);
+			if (link) {
+				flush();
+				out.push(link.segment);
+				i = link.end;
+				continue;
+			}
+		}
+		plain += ch;
+		i++;
+	}
+	flush();
+	return out;
+}
+
+interface ParsedLink {
+	segment: TaskTextSegment;
+	/** Index just past the link. */
+	end: number;
+}
+
+/** "[[target|label]]" starting at `at` (text[at..at+1] === "[["). */
+function parseWikilink(text: string, at: number): ParsedLink | null {
+	const close = text.indexOf("]]", at + 2);
+	if (close === -1) return null;
+	const inner = text.slice(at + 2, close);
+	if (inner.includes("[") || inner.includes("]") || inner.includes("\n")) return null;
+	const bar = inner.indexOf("|");
+	const target = (bar === -1 ? inner : inner.slice(0, bar)).trim();
+	if (target === "") return null;
+	const alias = bar === -1 ? "" : inner.slice(bar + 1).trim();
+	return {
+		segment: { kind: "wikilink", label: alias === "" ? target : alias, target },
+		end: close + 2,
+	};
+}
+
+/** "[label](target)" starting at `at` (text[at] === "["). */
+function parseMarkdownLink(text: string, at: number): ParsedLink | null {
+	// Label: up to the matching "]", allowing balanced brackets inside.
+	let depth = 1;
+	let k = at + 1;
+	for (; k < text.length; k++) {
+		const c = text[k];
+		if (c === "[") depth++;
+		else if (c === "]" && --depth === 0) break;
+		else if (c === "\n") return null;
+	}
+	if (k >= text.length || text[k + 1] !== "(") return null;
+	const label = text.slice(at + 1, k);
+	// Target: up to the matching ")", allowing balanced parentheses (Wikipedia URLs).
+	depth = 1;
+	let m = k + 2;
+	for (; m < text.length; m++) {
+		const c = text[m];
+		if (c === "(") depth++;
+		else if (c === ")" && --depth === 0) break;
+		else if (c === "\n") return null;
+	}
+	if (m >= text.length) return null;
+	let target = text.slice(k + 2, m).trim();
+	// An optional quoted title after whitespace: [a](http://x "Title").
+	const gap = /\s/.exec(target);
+	if (gap) {
+		const rest = target.slice(gap.index).trim();
+		if (!rest.startsWith('"') && !rest.startsWith("'")) return null;
+		target = target.slice(0, gap.index);
+	}
+	if (target.startsWith("<") && target.endsWith(">")) target = target.slice(1, -1).trim();
+	if (target === "") return null;
+	return {
+		segment: {
+			kind: "link",
+			label: label.trim() === "" ? target : label,
+			target,
+			external: URL_SCHEME_RE.test(target),
+		},
+		end: m + 1,
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Scan memo — reuse the last scan until something changes
+// ---------------------------------------------------------------------------
+
+/**
+ * Remembers the result of an async scan under a key describing its inputs
+ * (the folder rules), until `invalidate()` is called or the key changes.
+ * Callers arriving while a scan is running share that run instead of
+ * starting another; an invalidate during a run makes the next call run
+ * again. A failed run is forgotten so the next call retries.
+ */
+export class ScanMemo<T> {
+	private result: T | null = null;
+	private resultKey: string | null = null;
+	private dirty = true;
+	private inFlight: Promise<T> | null = null;
+	private inFlightKey: string | null = null;
+
+	invalidate(): void {
+		this.dirty = true;
+	}
+
+	get(key: string, run: () => Promise<T>): Promise<T> {
+		if (!this.dirty && this.result !== null && this.resultKey === key) {
+			return Promise.resolve(this.result);
+		}
+		if (this.inFlight && !this.dirty && this.inFlightKey === key) return this.inFlight;
+		this.dirty = false;
+		// Start now when idle; otherwise queue behind the run still in flight so
+		// results land in order. A synchronous throw from `run` becomes a rejection.
+		const start = (): Promise<T> => {
+			try {
+				return Promise.resolve(run());
+			} catch (e: unknown) {
+				return Promise.reject(e instanceof Error ? e : new Error(String(e)));
+			}
+		};
+		const started: Promise<T> = this.inFlight
+			? this.inFlight.then(start, start)
+			: start();
+		const p: Promise<T> = started.then(
+			(r) => {
+				this.result = r;
+				this.resultKey = key;
+				return r;
+			},
+			(e: unknown) => {
+				this.dirty = true;
+				throw e;
+			}
+		);
+		this.inFlight = p;
+		this.inFlightKey = key;
+		const settle = () => {
+			if (this.inFlight === p) this.inFlight = null;
+		};
+		void p.then(settle, settle);
+		return p;
+	}
 }

@@ -65,6 +65,23 @@ function formatDateUtc(ms: number): string {
 }
 
 /** Inclusive list of dates from start to end; [] when invalid or inverted; capped at 366. */
+/**
+ * First free note path for a generated report: "<base>.md", then "<base>-2.md",
+ * "<base>-3.md", … A path that already exists is never returned, so a report
+ * can never overwrite an earlier one. Null when `limit` names are all taken.
+ */
+export function firstFreePath(
+	base: string,
+	exists: (path: string) => boolean,
+	limit = 1000
+): string | null {
+	for (let n = 1; n <= limit; n++) {
+		const path = n === 1 ? `${base}.md` : `${base}-${n}.md`;
+		if (!exists(path)) return path;
+	}
+	return null;
+}
+
 export function dateRange(start: string, end: string): string[] {
 	const a = parseDateUtc(start);
 	const b = parseDateUtc(end);

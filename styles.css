@@ -284,6 +284,19 @@
 .tb-slot:hover .tb-slot-plus {
 	visibility: visible;
 }
+/* Touch screens have no hover: keep the delete and + buttons visible. */
+@media (hover: none) {
+	.tb-task-row .tb-row-meta button.tb-delete,
+	.tb-list-head button.tb-delete,
+	.tb-slot .tb-slot-plus {
+		visibility: visible;
+	}
+}
+body.is-mobile .tb-task-row .tb-row-meta button.tb-delete,
+body.is-mobile .tb-list-head button.tb-delete,
+body.is-mobile .tb-slot .tb-slot-plus {
+	visibility: visible;
+}
 .tb-now {
 	background: hsla(var(--interactive-accent-hsl), 0.07);
 }

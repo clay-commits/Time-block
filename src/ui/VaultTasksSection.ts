@@ -6,6 +6,7 @@ import {
 	collectFolders,
 	collectTags,
 	daysBetween,
+	splitTaskLinks,
 } from "../data/vaultTasks";
 import { checkbox, el, iconButton, textInput } from "./components";
 import type { PlannerCtx } from "./PlannerView";
@@ -14,6 +15,8 @@ export interface VaultTaskServices {
 	scan(): Promise<VaultTask[]>;
 	complete(source: TaskSource): Promise<"done" | "already" | "missing">;
 	open(task: VaultTask): Promise<void>;
+	/** Open a link found in a task's text (note path or wikilink target), relative to its note. */
+	openLink(target: string, sourcePath: string): Promise<void>;
 	saveSettings(): Promise<void>;
 	notice(message: string): void;
 }
@@ -33,7 +36,7 @@ export class VaultTasksSection {
 	private tasks: VaultTask[] | null = null;
 	private listEl: HTMLElement | null = null;
 	private countEl: HTMLElement | null = null;
-	private saveTimer: ReturnType<typeof setTimeout> | null = null;
+	private saveTimer: number | null = null;
 
 	constructor(
 		private readonly container: HTMLElement,
@@ -188,11 +191,23 @@ export class VaultTasksSection {
 	}
 
 	private persistFilter(): void {
-		if (this.saveTimer) clearTimeout(this.saveTimer);
-		this.saveTimer = setTimeout(() => {
+		if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
+		this.saveTimer = window.setTimeout(() => {
 			this.saveTimer = null;
 			void this.ctx.services.saveSettings();
 		}, 500);
+	}
+
+	/**
+	 * Called by the owning view when it unloads or rebuilds: a filter change
+	 * still waiting on its timer is saved right away instead of being dropped
+	 * with the timer.
+	 */
+	dispose(): void {
+		if (this.saveTimer === null) return;
+		window.clearTimeout(this.saveTimer);
+		this.saveTimer = null;
+		void this.ctx.services.saveSettings();
 	}
 
 	// ---- list --------------------------------------------------------------
@@ -266,7 +281,8 @@ export class VaultTasksSection {
 		});
 
 		const main = el(row, "div", "tb-vault-main");
-		const text = el(main, "span", "tb-vault-text", task.text || "(empty task)");
+		const text = el(main, "span", "tb-vault-text");
+		this.renderTitle(text, task);
 		text.title = "Open the note";
 		text.addEventListener("click", () => {
 			void ctx.services.open(task);
@@ -303,6 +319,43 @@ export class VaultTasksSection {
 		});
 	}
 
+	/** The title: markdown links and wikilinks become real links, the rest is text. */
+	private renderTitle(host: HTMLElement, task: VaultTask): void {
+		const segments = splitTaskLinks(task.text);
+		if (segments.length === 0) {
+			host.setText("(Empty task)");
+			return;
+		}
+		for (const seg of segments) {
+			if (seg.kind === "text") {
+				host.createSpan({ text: seg.text });
+				continue;
+			}
+			const external = seg.kind === "link" && seg.external;
+			const anchor = external
+				? host.createEl("a", {
+						text: seg.label,
+						cls: "external-link",
+						href: seg.target,
+						attr: { target: "_blank", rel: "noopener" },
+					})
+				: host.createEl("a", {
+						text: seg.label,
+						cls: "internal-link",
+						attr: { "data-href": seg.target },
+					});
+			anchor.addEventListener("click", (evt) => {
+				// The click must not also fire the title's "open the note"
+				// handler or reach the row (checkbox, arming).
+				evt.stopPropagation();
+				if (!external) {
+					evt.preventDefault();
+					void this.ctx.services.openLink(seg.target, task.path);
+				}
+			});
+		}
+	}
+
 	/** Copy a vault task into today's task list (once), remembering its source. */
 	private adopt(task: VaultTask): Task {
 		const key = `${task.path}\n${task.raw}`;
@@ -312,7 +365,7 @@ export class VaultTasksSection {
 		if (existing) return existing;
 		const adopted: Task = {
 			id: makeId("task"),
-			text: task.text || "(empty task)",
+			text: task.text || "(Empty task)",
 			created: this.ctx.now(),
 			completed: null,
 			source: { path: task.path, line: task.raw, lineNumber: task.lineNumber },

@@ -201,3 +201,38 @@ test("sameInner tolerates CRLF and trailing blank lines but not real differences
 	assert.ok(!sameInner("a: 1\n", "a: 2\n"));
 	assert.ok(!sameInner("a: 1\n\nb: 2\n", "a: 1\nb: 2\n"));
 });
+
+// ---------------------------------------------------------------------------
+// 1.1.1 — unclosed fences: the finder reports them, and the UI must treat
+// them read-only (everything to end-of-file would otherwise count as inner).
+// ---------------------------------------------------------------------------
+
+test("unclosed fence swallows the rest of the note into inner and reports closed: false", () => {
+	const doc = "```timeblock\n" + YAML + "\n# Heading the user kept writing\nsome text\n";
+	const found = findFencedBlock(doc, "timeblock");
+	assert.ok(found);
+	assert.equal(found.closed, false);
+	assert.equal(found.outerEnd, doc.length);
+	assert.ok(found.inner.includes("# Heading the user kept writing"), "the trailing prose is inside inner");
+	assert.ok(found.inner.includes("some text"));
+});
+
+test("an indented closing fence does not close our block: still reported unclosed", () => {
+	const doc = "```timeblock\n" + YAML + "  ```\nafter\n";
+	const found = findFencedBlock(doc, "timeblock");
+	assert.ok(found);
+	assert.equal(found.closed, false);
+	assert.ok(found.inner.includes("after"));
+});
+
+test("a fence closed by a shorter run stays open; a longer or equal run closes it", () => {
+	const shorter = "````timeblock\n" + YAML + "```\nafter\n";
+	const f1 = findFencedBlock(shorter, "timeblock");
+	assert.ok(f1);
+	assert.equal(f1.closed, false);
+	const longer = "```timeblock\n" + YAML + "`````\nafter\n";
+	const f2 = findFencedBlock(longer, "timeblock");
+	assert.ok(f2);
+	assert.equal(f2.closed, true);
+	assert.equal(f2.inner, YAML);
+});
