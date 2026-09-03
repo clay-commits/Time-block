@@ -8,7 +8,7 @@
 		"dev": "node esbuild.config.mjs",
 		"build": "node esbuild.config.mjs production",
 		"typecheck": "tsc --noEmit",
-		"test": "node --import tsx --test tests/serializer.test.ts tests/block.test.ts tests/rollover.test.ts tests/slots.test.ts tests/debounce.test.ts tests/vaultTasks.test.ts tests/report.test.ts"
+		"test": "node --import tsx --test \"tests/*.test.ts\""
 	},
 	"keywords": [],
 	"author": "clay-commits",
